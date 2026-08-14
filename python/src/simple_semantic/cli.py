@@ -1,9 +1,4 @@
-"""``simple-semantic`` command line: index, search, stats, compact.
-
-Deliberately thin. It exists so that an index can be inspected and driven
-without writing a script, and so the conformance harness has something to
-call.
-"""
+"""``simple-semantic`` command line: index, search, stats, compact."""
 
 from __future__ import annotations
 
@@ -28,8 +23,7 @@ def _build_embedder(args: argparse.Namespace) -> Embedder:
     if args.embedder == "replay":
         if not args.fixture:
             raise SimpleSemanticError("--embedder replay needs --fixture PATH")
-        # Dimension and id come from the fixture, not from the flags: the
-        # recording is the authority on what produced it.
+        # Dimension and id come from the fixture, not the flags.
         return ReplayEmbedder.from_file(args.fixture)
     if args.embedder == "gemini":
         from .gemini import GeminiEmbedder
@@ -41,9 +35,7 @@ def _build_embedder(args: argparse.Namespace) -> Embedder:
 def _read_documents(source: Path | None) -> list[Document]:
     """Read JSONL documents from a file or stdin.
 
-    Each line is ``{"id": ..., "text": ..., "meta": {...}}``; ``meta`` is
-    optional. This is the same shape as docs.jsonl minus the hash, which the
-    index computes.
+    Each line is ``{"id": ..., "text": ..., "meta": {...}}``; ``meta`` optional.
     """
     # Not a context manager: the handle is either stdin, which must not be
     # closed, or a file this function owns and closes in the finally block.
@@ -118,9 +110,7 @@ async def _cmd_search(args: argparse.Namespace) -> int:
                     {
                         "rank": rank,
                         "id": result.id,
-                        # Fixed precision as a string: the shortest round-trip
-                        # decimal form of a double differs between languages,
-                        # so conformance compares text it can rely on.
+                        # Fixed precision as a string; see SPEC.md §7.2.
                         "score": f"{result.score:.12f}",
                         "row": result.row,
                     },

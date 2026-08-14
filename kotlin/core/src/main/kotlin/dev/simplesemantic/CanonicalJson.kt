@@ -3,23 +3,16 @@ package dev.simplesemantic
 /**
  * Canonical JSON — SPEC.md §7. Hand-written, both directions.
  *
- * No JVM JSON library guarantees all four canonicalization rules by default:
- * separator style, key ordering, escape selection, and literal (unescaped)
- * non-ASCII output. Since the format's whole claim is that two implementations
- * emit identical bytes, an encoder that is "close enough by default" is not
- * usable — and a dependency that might change its defaults in a minor release
- * is worse than 150 lines that cannot.
+ * No JVM JSON library guarantees all four rules by default: separator style,
+ * key ordering, escape selection, and literal non-ASCII output.
  */
 public object CanonicalJson {
 
     // ------------------------------------------------------------------ encode
 
     /**
-     * Encode an object whose key order is already correct.
-     *
-     * Used for the manifest and for document lines, where SPEC.md fixes the
-     * order. Pass a [LinkedHashMap] and the insertion order is the output
-     * order.
+     * Encode an object whose key order is already correct. Pass a
+     * [LinkedHashMap] and insertion order is output order.
      */
     public fun encodeObject(entries: Map<String, Any?>, sortKeys: Boolean = false): String {
         val builder = StringBuilder()
@@ -56,7 +49,7 @@ public object CanonicalJson {
         return builder.toString()
     }
 
-    /** Reject anything the Python implementation could not reproduce byte-for-byte. */
+    /** Reject anything the other implementation could not reproduce byte-for-byte. */
     public fun validateMeta(meta: Map<String, Any?>) {
         for ((key, value) in meta) {
             validateValue(value, "meta.$key")
@@ -118,14 +111,9 @@ public object CanonicalJson {
     /**
      * Ascending by Unicode code point, per SPEC.md §7 rule 2.
      *
-     * Not [String.compareTo], which orders by UTF-16 code unit and therefore
-     * sorts astral-plane characters (U+10000 and above, encoded as surrogate
-     * pairs starting at 0xD800) *below* the BMP characters U+E000..U+FFFF.
-     * Python sorts strings by code point, so the JVM's natural order would
-     * disagree on exactly the inputs an emoji key produces.
-     *
-     * Comparing UTF-8 bytes is equivalent to comparing code points — that is a
-     * design property of UTF-8 — and is cheaper than decoding both strings.
+     * Not [String.compareTo], which orders by UTF-16 code unit and so sorts
+     * astral-plane characters below U+E000..U+FFFF. Comparing UTF-8 bytes is
+     * equivalent to comparing code points.
      */
     private val CODE_POINT_ORDER: Comparator<String> = Comparator { left, right ->
         val a = left.toByteArray(Charsets.UTF_8)
@@ -151,9 +139,7 @@ public object CanonicalJson {
                 ch == '\r' -> builder.append("\\r")
                 ch == '\t' -> builder.append("\\t")
                 ch < ' ' -> builder.append("\\u").append(HEX[ch.code])
-                // Everything else literal, including all non-ASCII. Escaping it
-                // would still be valid JSON and would still break byte-identity.
-                // '/' is never escaped.
+                // Everything else literal, including all non-ASCII. '/' is never escaped.
                 else -> builder.append(ch)
             }
         }
@@ -169,9 +155,8 @@ public object CanonicalJson {
      * Parse a JSON object into `Map<String, Any?>`.
      *
      * Values come back as `String`, `Long`, `Double`, `Boolean`, `null`,
-     * `List<Any?>` or `Map<String, Any?>`. Doubles are parsed but cannot be
-     * re-encoded — see [MetaValueException] — so a foreign file with a float in
-     * meta is readable and reports the problem only if you try to write it back.
+     * `List<Any?>` or `Map<String, Any?>`. Doubles parse but cannot be
+     * re-encoded — see [MetaValueException].
      */
     public fun parseObject(input: String): Map<String, Any?> {
         val parser = Parser(input)

@@ -1,12 +1,10 @@
 """Fixed-size chunking with overlap.
 
 The chunker's id is part of the content hash (SPEC.md §4.1), so changing the
-chunking strategy correctly invalidates every stored vector.
+strategy invalidates every stored vector.
 
-Chunk boundaries are counted in **Unicode code points**, not bytes and not
-UTF-16 code units. Bytes would split a multi-byte character; UTF-16 code units
-would make the JVM and Python disagree on any text containing an emoji or a
-rarer CJK character, because those are one code point and two UTF-16 units.
+Boundaries are counted in Unicode code points: UTF-16 code units would make the
+JVM and Python disagree on anything above the BMP.
 """
 
 from __future__ import annotations
@@ -25,10 +23,8 @@ class Chunk:
 class FixedChunker:
     """Fixed window over code points, with a fixed overlap.
 
-    Deliberately not sentence- or token-aware. A smarter chunker is a real
-    improvement to retrieval quality and a real source of cross-language
-    divergence; this project's claim is about the index, so the chunker stays
-    dumb and identical.
+    Deliberately not sentence- or token-aware: a smarter chunker is a source of
+    cross-language divergence.
     """
 
     def __init__(self, size: int = 512, overlap: int = 64) -> None:
@@ -43,15 +39,12 @@ class FixedChunker:
     def chunk(self, text: str) -> list[Chunk]:
         """Split ``text``. Empty and whitespace-only input yields no chunks.
 
-        Returning nothing for empty input rather than one empty chunk keeps
-        zero vectors out of the index in the common case; the e_0 fallback in
-        SPEC.md §3.1 is the safety net, not the plan.
+        Keeps zero vectors out of the index; the e_0 fallback in SPEC.md §3.1 is
+        the safety net, not the plan.
         """
         if not text.strip():
             return []
-        # A list of code points: Python str indexing is already by code point,
-        # but going through a list makes the contract explicit and matches how
-        # the Kotlin side must walk the string.
+        # Explicit code points, matching how the Kotlin side must walk the string.
         points = list(text)
         step = self.size - self.overlap
         chunks: list[Chunk] = []

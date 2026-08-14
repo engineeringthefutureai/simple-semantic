@@ -1,12 +1,7 @@
 """Canonical JSON encoding — SPEC.md §7.
 
-Two implementations in two languages must emit the same bytes for the same
-content, so the encoding is pinned rather than delegated to whatever a JSON
-library does by default.
-
-Python's ``json.dumps`` already satisfies the rules given the right flags, so
-this module is mostly a validator plus a thin wrapper. The Kotlin side
-hand-writes the equivalent encoder.
+``json.dumps`` satisfies the rules given the right flags, so this is a validator
+plus a thin wrapper. Kotlin hand-writes the equivalent encoder.
 """
 
 from __future__ import annotations
@@ -21,11 +16,9 @@ _INT64_MAX = 2**63 - 1
 
 
 def validate_meta(meta: dict[str, Any], _path: str = "meta") -> None:
-    """Reject anything the sibling implementation could not reproduce byte-for-byte.
+    """Reject anything the other implementation could not reproduce byte-for-byte.
 
-    Checked at write time rather than read time: writing a file the other
-    implementation cannot reproduce is the failure we are preventing, and by
-    read time it has already happened.
+    Checked at write time; by read time the bad file already exists.
     """
     for key, value in meta.items():
         if not isinstance(key, str):
@@ -36,8 +29,7 @@ def validate_meta(meta: dict[str, Any], _path: str = "meta") -> None:
 def _validate_value(value: Any, path: str) -> None:
     if value is None or isinstance(value, str):
         return
-    # bool before int: bool is a subclass of int in Python and would otherwise
-    # be range-checked as an integer and serialized as one.
+    # bool before int: bool is a subclass of int in Python.
     if isinstance(value, bool):
         return
     if isinstance(value, int):
@@ -60,13 +52,9 @@ def _validate_value(value: Any, path: str) -> None:
 def encode(obj: dict[str, Any], *, sort_keys: bool = False) -> bytes:
     """Encode one object to canonical UTF-8 JSON with no trailing newline.
 
-    ``sort_keys`` is False for objects whose key order SPEC.md fixes
-    (manifest, document lines) and True for user-supplied ``meta``, whose keys
-    sort ascending by code point.
-
-    Note that Python sorts ``str`` by code point, which is what §7 requires —
-    a UTF-16 code-unit sort (the JVM's natural ``String`` ordering) differs
-    above the BMP, so the Kotlin encoder sorts explicitly by code point.
+    ``sort_keys`` is False where SPEC.md fixes the order and True for
+    user-supplied ``meta``. Python sorts ``str`` by code point, which is what §7
+    requires; the JVM's natural ordering is by UTF-16 code unit.
     """
     return json.dumps(
         obj,
@@ -85,9 +73,8 @@ def encode_string(value: str) -> bytes:
 def encode_document(doc_id: str, text: str, meta: dict[str, Any], content_hash: str) -> bytes:
     """One line of docs.jsonl, without the terminating LF. SPEC.md §4.
 
-    Assembled piece by piece rather than from a dict so that the outer key
-    order (id, text, meta, hash) is fixed by this code while ``meta``'s
-    user-supplied keys are sorted independently.
+    Assembled piece by piece so the outer key order is fixed here while
+    ``meta``'s keys sort independently.
     """
     validate_meta(meta)
     return b"".join(

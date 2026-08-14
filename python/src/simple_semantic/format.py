@@ -1,9 +1,4 @@
-"""The four files. SPEC.md §2-§6.
-
-This module knows the byte layout and nothing about search. Everything here
-has a direct clause in SPEC.md; where the code makes a choice the spec does
-not force, the comment says which.
-"""
+"""The four files. SPEC.md §2-§6. Byte layout only, nothing about search."""
 
 from __future__ import annotations
 
@@ -43,9 +38,7 @@ def content_hash(text: str, embedder_id: str, chunker_id: str) -> str:
     """SPEC.md §4.1: sha256(text || 0x00 || embedder_id || 0x00 || chunker_id).
 
     The NUL separators are unambiguous because none of the three inputs may
-    contain a NUL byte. Without them, ("ab", "c") and ("a", "bc") would hash
-    alike, and an id containing the delimiter would let one document
-    impersonate another's hash.
+    contain a NUL byte; without them ("ab", "c") and ("a", "bc") hash alike.
     """
     digest = hashlib.sha256()
     digest.update(text.encode("utf-8"))
@@ -133,9 +126,8 @@ class Manifest:
 class Tombstones:
     """A bit per row, LSB-first within each byte. SPEC.md §6.
 
-    LSB-first is stated in the spec and repeated here because MSB-first is an
-    equally common convention that produces a file of the same size which
-    parses without error and disagrees about which rows are deleted.
+    MSB-first produces a file of the same size that parses without error and
+    disagrees about which rows are deleted, so the order is restated here.
     """
 
     def __init__(self, row_count: int, raw: bytes | None = None) -> None:
@@ -183,9 +175,7 @@ class Tombstones:
     def live_mask(self) -> np.ndarray:
         """Boolean array, True where the row is live.
 
-        ``np.unpackbits`` with bitorder="little" is exactly the LSB-first
-        convention of §6, so this is one call rather than a Python loop over
-        every row.
+        ``np.unpackbits`` with bitorder="little" is exactly §6's convention.
         """
         if self._row_count == 0:
             return np.zeros(0, dtype=bool)
@@ -193,8 +183,7 @@ class Tombstones:
         return ~bits[: self._row_count].astype(bool)
 
     def to_bytes(self) -> bytes:
-        # Padding bits past row_count are already zero and stay that way:
-        # mark_deleted range-checks, and grow_to appends zero bytes.
+        # Padding bits stay zero: mark_deleted range-checks, grow_to appends zeros.
         return bytes(self._bits)
 
     def any_deleted(self) -> bool:
@@ -231,11 +220,7 @@ def read_offsets(directory: Path, row_count: int) -> np.ndarray:
 
 
 def open_vectors(directory: Path, row_count: int, dimension: int) -> np.ndarray:
-    """Memory-map vectors.f32 read-only. SPEC.md §3.
-
-    The headerless layout is what makes this a single call with no parsing and
-    no offset arithmetic.
-    """
+    """Memory-map vectors.f32 read-only. SPEC.md §3."""
     path = directory / VECTORS
     size = path.stat().st_size
     expected = row_count * dimension * 4

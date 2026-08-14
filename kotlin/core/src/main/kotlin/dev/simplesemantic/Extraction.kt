@@ -5,12 +5,9 @@ import java.lang.reflect.Field
 /**
  * Marks the field holding the document id.
  *
- * Targeted at [AnnotationTarget.FIELD] on purpose. Kotlin resolves an
- * unqualified annotation on a constructor `val` to the first applicable target
- * in the order parameter, property, field — so restricting the target to FIELD
- * is what makes the idiomatic `@SemanticId val id: String` land somewhere plain
- * Java reflection can see it, with no `kotlin-reflect` dependency and no
- * `@field:` prefix in user code.
+ * Targeted at [AnnotationTarget.FIELD] so that the idiomatic
+ * `@SemanticId val id: String` lands where plain Java reflection can see it —
+ * no `kotlin-reflect` dependency, no `@field:` prefix in user code.
  */
 @Target(AnnotationTarget.FIELD)
 @Retention(AnnotationRetention.RUNTIME)
@@ -19,10 +16,9 @@ public annotation class SemanticId
 /**
  * Marks a field whose text is embedded.
  *
- * [order] disambiguates concatenation. `Class.getDeclaredFields()` is not
- * specified to return fields in declaration order — HotSpot happens to, other
- * JVMs need not — and silently reordering the parts of a document changes every
- * vector in the index.
+ * [order] pins concatenation: `Class.getDeclaredFields()` is not specified to
+ * return declaration order, and reordering a document's parts changes its
+ * vector.
  */
 @Target(AnnotationTarget.FIELD)
 @Retention(AnnotationRetention.RUNTIME)
@@ -34,13 +30,8 @@ public annotation class SemanticIndexed(val order: Int = 0)
 public annotation class SemanticMeta
 
 /**
- * Build documents from three plain lambdas.
- *
- * **Public, deliberately.** The sibling project `simple-fts` had exactly this
- * constructor but marked it `internal`, with the only public factory
- * hard-wiring the annotation extractors — an extension point that was built and
- * then sealed off. Both doors are open here: this one needs no annotations, no
- * reflection, and no requirement that the input be a data class.
+ * Build documents from three plain lambdas. No annotations, no reflection, and
+ * no requirement that the input be a data class.
  */
 public fun <T> documentsFrom(
     items: Iterable<T>,
@@ -52,12 +43,8 @@ public fun <T> documentsFrom(
 }
 
 /**
- * Build documents from annotated fields.
- *
- * Nullable annotated fields are skipped rather than crashing. `simple-fts` cast
- * with `value as String` and blew up on precisely the nullable field its own
- * README example declared — a good reminder that the happy-path example and the
- * test suite have to be the same code.
+ * Build documents from annotated fields. Nullable annotated fields are skipped
+ * rather than throwing.
  */
 public fun <T : Any> documentsFrom(
     items: Iterable<T>,
@@ -97,9 +84,7 @@ internal class ExtractionPlan private constructor(
                     idField = field
                 }
                 field.getAnnotation(SemanticIndexed::class.java)?.let { annotation ->
-                    // Declaration order is the tiebreak, but it is only a
-                    // tiebreak: @SemanticIndexed(order = n) is what actually
-                    // pins the concatenation.
+                    // Declaration order is only the tiebreak; order = n pins it.
                     indexed.add((annotation.order * 1000 + position) to field)
                 }
                 if (field.isAnnotationPresent(SemanticMeta::class.java)) meta.add(field)
@@ -133,7 +118,7 @@ internal class ExtractionPlan private constructor(
         val text = textFields.mapNotNull { it.get(item)?.toString() }.joinToString(separator)
         val meta = LinkedHashMap<String, Any?>()
         for (field in metaFields) {
-            // Absent rather than null: a missing value should not occupy a key.
+            // Absent rather than null.
             field.get(item)?.let { meta[field.name] = it }
         }
         return Document(id = rawId.toString(), text = text, meta = meta)

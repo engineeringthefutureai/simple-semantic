@@ -14,14 +14,9 @@ allprojects {
     }
 }
 
-// JDK 22 is the floor: the Foreign Function & Memory API is finalized there, so
-// java.lang.foreign needs no --enable-preview and no --add-modules. SPEC.md §3
-// explains why this project needs FFM rather than ByteBuffer — the 2 GB
-// ByteBuffer cap is about 175k rows at 3072 dimensions, a ceiling a real
-// knowledge base reaches.
-//
-// Checked here rather than left to a confusing "cannot find symbol
-// java.lang.foreign.Arena" from the compiler.
+// JDK 22 is the floor: the Foreign Function & Memory API is final there, so
+// java.lang.foreign needs no --enable-preview. Checked here rather than left to
+// a confusing "cannot find symbol java.lang.foreign.Arena" from the compiler.
 val minimumJdk = JavaVersion.VERSION_22
 require(JavaVersion.current() >= minimumJdk) {
     "simple-semantic needs JDK ${minimumJdk.majorVersion} or newer for the Foreign " +
@@ -34,13 +29,8 @@ subprojects {
 
     extensions.configure<KotlinJvmProjectExtension>("kotlin") {
         compilerOptions {
-            // Bytecode targets 22 even when built on a newer JDK, so the
-            // artifact runs anywhere FFM is final rather than only on the
-            // build machine's JDK.
+            // Bytecode targets 22 even when built on a newer JDK.
             jvmTarget.set(JvmTarget.JVM_22)
-            // The public API of a library should be explicit: every declaration
-            // states its visibility and its return type, so a widening of the
-            // surface is a visible diff rather than an accident.
             extraWarnings.set(true)
             allWarningsAsErrors.set(true)
         }

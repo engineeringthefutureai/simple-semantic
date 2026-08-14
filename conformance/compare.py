@@ -1,15 +1,9 @@
 #!/usr/bin/env python3
 """Compare two conformance runs.
 
-Ranked id lists must match **exactly**. Scores are allowed to diverge by up to
-1e-6, because the two implementations are permitted to reduce differently:
-Python's ``D @ q`` goes through BLAS, which uses blocked summation, while the
-Kotlin dot product is a sequential loop. SPEC.md §8 allows that; SPEC.md §3.1
-does *not* allow it for normalization, which is why the stored bytes are
-identical even though the scores are only nearly so.
-
-If the ids ever disagree on a tie, the tie-break rule in §8 has been broken by
-one side.
+Ranked id lists must match exactly; scores may diverge by up to 1e-6, because
+SPEC.md §8 leaves the scoring reduction order free while §3.1 pins
+normalization's.
 """
 
 from __future__ import annotations

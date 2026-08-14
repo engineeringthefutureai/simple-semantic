@@ -1,14 +1,7 @@
 """Turning your own objects into :class:`Document` values.
 
-Two entry points, both public:
-
-- :func:`from_dataclass`, driven by field annotations, for the common case.
-- :func:`from_lambdas`, taking plain callables, for everything else.
-
-The lambda-based factory being public is deliberate. The sibling project
-`simple-fts` had exactly this constructor but marked it ``internal``, with the
-only public factory hard-wiring the annotation extractors — an extension point
-that was built and then sealed off. Both doors are open here.
+Two entry points, both public: :func:`from_dataclass` driven by field
+annotations, and :func:`from_lambdas` taking plain callables.
 """
 
 from __future__ import annotations
@@ -61,8 +54,7 @@ def from_lambdas(
 ) -> list[Document]:
     """Build documents from three plain callables.
 
-    No annotations, no reflection, no requirement that the input be a
-    dataclass — a dict, an ORM row, or a tuple all work.
+    No annotations and no requirement that the input be a dataclass.
     """
     documents: list[Document] = []
     for item in items:
@@ -74,10 +66,7 @@ def from_lambdas(
 def from_dataclass(items: Iterable[T], *, separator: str = "\n\n") -> list[Document]:
     """Build documents from ``Annotated`` dataclass fields.
 
-    Nullable annotated fields are skipped rather than crashing. `simple-fts`
-    cast with ``value as String`` and blew up on precisely the nullable field
-    its own README example declared, which is a good reminder that the
-    happy-path example and the test suite have to be the same code.
+    Nullable annotated fields are skipped rather than raising.
     """
     items = list(items)
     if not items:

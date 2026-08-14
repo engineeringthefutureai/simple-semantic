@@ -5,12 +5,8 @@ import java.nio.file.Path
 import java.security.MessageDigest
 
 /**
- * The text asked for is not in the recording.
- *
- * Names the mode as well as the text, because the commonest cause is asking for
- * a document embedding of something recorded only as a query. Those are
- * genuinely different vectors — different task types — and serving one for the
- * other is a silent quality loss.
+ * The text asked for is not in the recording. Names the mode too: the commonest
+ * cause is asking for a document embedding of something recorded as a query.
  */
 public class ReplayMissException(
     mode: String,
@@ -25,23 +21,15 @@ public class ReplayMissException(
 )
 
 /**
- * Serve recorded vectors instead of calling a model.
+ * Serve recorded vectors instead of calling a model. SPEC.md appendix B.
  *
- * The third embedder, and the one that closes a real gap. [HashingEmbedder] is
- * deterministic but semantically meaningless: it can prove the *format* is
- * correct and nothing about whether search retrieves. [GeminiEmbedder]
- * retrieves properly but needs a credential, a network and money, so no test
- * suite can depend on it.
+ * Reads vectors a real model produced once, recorded to a JSON fixture both
+ * implementations parse. That makes retrieval-quality assertions runnable
+ * offline with identical numbers every run, and lets conformance prove
+ * byte-identity from real embeddings.
  *
- * This one reads vectors a real model produced once, recorded to a JSON fixture
- * that both implementations parse. That makes genuine retrieval-quality
- * assertions runnable in CI, offline, with identical numbers every run — and it
- * lets conformance prove byte-identity from *real* embeddings rather than only
- * from the hashing embedder.
- *
- * A miss is a loud error, never a zero vector or a fallback. A mock that
- * silently invents a plausible answer is the failure mode this whole project is
- * built to refuse.
+ * A miss is a loud error, never a zero vector: inventing a plausible answer
+ * would turn "not in the recording" into "retrieval quietly got worse".
  */
 public class ReplayEmbedder(
     override val id: String,
@@ -73,8 +61,7 @@ public class ReplayEmbedder(
             val embedderId = raw["embedder_id"] as? String
                 ?: throw SimpleSemanticException("$path: 'embedder_id' is not a string")
             if (!embedderId.endsWith("@$dimension")) {
-                // The same guard build_fixture.py applies, repeated at load time
-                // because a fixture can be hand-edited after it is generated.
+                // Repeated at load time: a fixture can be hand-edited after generation.
                 throw SimpleSemanticException(
                     "$path: embedder_id '$embedderId' disagrees with dimension $dimension",
                 )
@@ -119,15 +106,14 @@ public class ReplayEmbedder(
     private fun lookup(mode: String, table: Map<String, FloatArray>, text: String): FloatArray {
         val key = contentKey(text)
         val vector = table[key] ?: throw ReplayMissException(mode, text, key, source)
-        // Copy: a caller mutating the result must not corrupt the recording.
+        // Copy: a caller must not be able to mutate the recording.
         return vector.copyOf()
     }
 
     override suspend fun embedDocuments(texts: List<String>): List<FloatArray> =
         texts.map { lookup("document", documents, it) }
 
-    // Deliberately a different table from embedDocuments. The recording was made
-    // with RETRIEVAL_QUERY here and RETRIEVAL_DOCUMENT there, so the same string
-    // has two different correct answers.
+    // A different table from embedDocuments: RETRIEVAL_QUERY here,
+    // RETRIEVAL_DOCUMENT there, so the same string has two right answers.
     override suspend fun embedQuery(text: String): FloatArray = lookup("query", queries, text)
 }

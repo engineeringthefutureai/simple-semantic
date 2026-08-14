@@ -1,13 +1,10 @@
 """simple-semantic: brute-force semantic search over a memory-mapped matrix.
 
-Exact k-NN, 100% recall by construction, exact metadata filtering, trivial
-updates. No ANN index, no vector database, no hidden machinery.
-
-The on-disk format is specified in SPEC.md and is the primary artifact; this
-package is one of two implementations of it.
+The on-disk format is specified in SPEC.md; this package is one of two
+implementations of it.
 
 ``GeminiEmbedder`` lives in :mod:`simple_semantic.gemini` and is not imported
-here, so that using the library does not require an HTTP client.
+here, so using the library does not require an HTTP client.
 """
 
 from .canonical_json import encode as canonical_encode

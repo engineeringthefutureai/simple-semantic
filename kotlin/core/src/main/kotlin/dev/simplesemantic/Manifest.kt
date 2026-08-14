@@ -25,8 +25,7 @@ public fun utcNow(): String = RFC3339.format(Instant.now())
  * SPEC.md §4.1: `sha256(text || 0x00 || embedder_id || 0x00 || chunker_id)`.
  *
  * The NUL separators are unambiguous because none of the three inputs may
- * contain a NUL byte. Without them ("ab", "c") and ("a", "bc") would hash
- * alike.
+ * contain a NUL byte.
  */
 public fun contentHash(text: String, embedderId: String, chunkerId: String): String {
     val digest = MessageDigest.getInstance("SHA-256")
@@ -62,7 +61,7 @@ public data class Manifest(
     val normalized: Boolean = true,
     val hashAlgorithm: String = "sha256",
 ) {
-    /** Key order is fixed by SPEC.md §2, and this function is where it is fixed. */
+    /** Key order is fixed by SPEC.md §2, and fixed here. */
     public fun encode(): String = CanonicalJson.encodeObject(
         linkedMapOf(
             "format_version" to formatVersion,
@@ -127,9 +126,8 @@ public data class Manifest(
 /**
  * A bit per row, LSB-first within each byte. SPEC.md §6.
  *
- * LSB-first is repeated here because MSB-first is an equally common convention
- * that produces a file of the same size, parses without error, and disagrees
- * about which rows are deleted.
+ * MSB-first produces a file of the same size that parses without error and
+ * disagrees about which rows are deleted.
  */
 public class Tombstones private constructor(
     private var bits: ByteArray,
@@ -183,7 +181,6 @@ public class Tombstones private constructor(
     /** Boolean array, true where the row is live. */
     public fun liveMask(): BooleanArray = BooleanArray(rows) { !isDeleted(it) }
 
-    // Padding bits past rowCount are already zero and stay that way: markDeleted
-    // range-checks, and growTo appends zero bytes.
+    // Padding bits stay zero: markDeleted range-checks, growTo appends zeros.
     public fun toByteArray(): ByteArray = bits.copyOf()
 }

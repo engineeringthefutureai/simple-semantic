@@ -1,20 +1,11 @@
 """``ReplayEmbedder`` — serve recorded vectors instead of calling a model.
 
-The third embedder, and the one that closes a real gap. ``HashingEmbedder`` is
-deterministic but semantically meaningless: it can prove the *format* is
-correct, and nothing about whether search actually retrieves. ``GeminiEmbedder``
-retrieves properly but needs a credential, a network, and money, so no test
-suite can depend on it.
+Reads vectors a real model produced once, recorded to a JSON fixture. That makes
+retrieval-quality assertions runnable offline with identical numbers every run.
+SPEC.md appendix B.
 
-``ReplayEmbedder`` reads vectors a real model produced once, recorded to a JSON
-fixture. That makes genuine retrieval-quality assertions — top-1 accuracy,
-negative controls ranking below real matches — runnable in CI, offline, with no
-key and byte-identical results every run.
-
-A miss is a loud error, never a zero vector or a fallback. A mock that silently
-invents a plausible answer is the failure mode this whole project is built to
-refuse: it would turn "your text is not in the recording" into "your retrieval
-quality quietly got worse".
+A miss is a loud error, never a zero vector: inventing a plausible answer would
+turn "this text is not in the recording" into "retrieval quietly got worse".
 """
 
 from __future__ import annotations
@@ -32,10 +23,8 @@ from .errors import SimpleSemanticError
 class ReplayMissError(SimpleSemanticError):
     """The text asked for is not in the recording.
 
-    Names the mode as well as the text, because the commonest cause is asking
-    for a document embedding of something recorded only as a query. Those are
-    genuinely different vectors — different task types — and serving one for the
-    other is a silent quality loss.
+    Names the mode too: the commonest cause is asking for a document embedding
+    of something recorded only as a query, which is a different vector.
     """
 
     def __init__(self, mode: str, text: str, key: str, source: str) -> None:
@@ -56,11 +45,8 @@ def content_key(text: str) -> str:
 class ReplayEmbedder:
     """An :class:`~simple_semantic.embedder.Embedder` backed by a recording.
 
-    Reports ``produces_normalized`` honestly from the fixture. The story fixture
-    says ``False``, because ``gemini-embedding-001`` pre-normalizes only its
-    default 3072-dimension output and these vectors are 768 — which makes this
-    embedder the one that exercises SPEC.md §3.1 write-time normalization
-    against genuinely unnormalized input.
+    ``produces_normalized`` comes from the fixture. The story fixture says
+    ``False``, which is what exercises SPEC.md §3.1 against unnormalized input.
     """
 
     #: No network, so batching exists only to satisfy the interface.
@@ -96,8 +82,7 @@ class ReplayEmbedder:
         dimension = int(raw["dimension"])
         embedder_id = str(raw["embedder_id"])
         if not embedder_id.endswith(f"@{dimension}"):
-            # The same guard build_fixture.py applies, repeated at load time
-            # because a fixture can be hand-edited after it is generated.
+            # Repeated at load time: a fixture can be hand-edited after generation.
             raise SimpleSemanticError(
                 f"{fixture_path}: embedder_id {embedder_id!r} disagrees with dimension {dimension}"
             )
@@ -131,7 +116,7 @@ class ReplayEmbedder:
         vector = table.get(key)
         if vector is None:
             raise ReplayMissError(mode, text, key, self._source)
-        # Copy: a caller mutating the result must not corrupt the recording.
+        # Copy: a caller must not be able to mutate the recording.
         return vector.copy()
 
     async def embed_documents(self, texts: list[str]) -> np.ndarray:
@@ -140,7 +125,6 @@ class ReplayEmbedder:
         return np.stack([self._lookup("document", self._documents, text) for text in texts])
 
     async def embed_query(self, text: str) -> np.ndarray:
-        # Deliberately a different table from embed_documents. The recording was
-        # made with RETRIEVAL_QUERY here and RETRIEVAL_DOCUMENT there, so the
-        # same string has two different correct answers.
+        # A different table from embed_documents: RETRIEVAL_QUERY here,
+        # RETRIEVAL_DOCUMENT there, so the same string has two right answers.
         return self._lookup("query", self._queries, text)

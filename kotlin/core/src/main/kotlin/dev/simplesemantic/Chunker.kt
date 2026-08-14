@@ -9,18 +9,14 @@ public data class Chunk(val index: Int, val text: String)
  * Fixed window over code points, with a fixed overlap.
  *
  * The chunker's id is part of the content hash (SPEC.md §4.1), so changing the
- * strategy correctly invalidates every stored vector.
+ * strategy invalidates every stored vector.
  *
- * Boundaries are counted in **Unicode code points**, not UTF-16 code units.
- * Counting `String.length` would make the JVM disagree with Python on any text
- * containing an emoji or a rarer CJK character — one code point, two UTF-16
- * units — and would sometimes split a surrogate pair, producing a chunk that is
- * not valid text.
+ * Boundaries are counted in Unicode code points, not UTF-16 code units:
+ * `String.length` would disagree with Python above the BMP and would sometimes
+ * split a surrogate pair.
  *
- * Deliberately not sentence- or token-aware. A smarter chunker is a real
- * improvement to retrieval quality and a real source of cross-language
- * divergence; this project's claim is about the index, so the chunker stays
- * dumb and identical.
+ * Deliberately not sentence- or token-aware: a smarter chunker is a source of
+ * cross-language divergence.
  */
 public class FixedChunker(
     public val size: Int = 512,
