@@ -12,8 +12,7 @@ import kotlinx.coroutines.withContext
 /**
  * The one component that makes a network call.
  *
- * Built on the JDK's `java.net.http.HttpClient`, so `core` keeps zero runtime
- * dependencies beyond the Kotlin stdlib and coroutines.
+ * Built on the JDK's `java.net.http.HttpClient` rather than a client library.
  *
  * Two model quirks that are silent when you get them wrong:
  * `gemini-embedding-001` pre-normalizes only its default 3072-dimension output,
@@ -76,24 +75,25 @@ public class GeminiEmbedder(
         }
 
         val body = sendWithRetry(payload)
-        val parsed = CanonicalJson.parseObject(body)
-        val embeddings = parsed["embeddings"] as? List<*>
+        val parsed = try {
+            WireJson.decodeFromString(EmbedResponseWire.serializer(), body)
+        } catch (exc: kotlinx.serialization.SerializationException) {
+            throw SimpleSemanticException("$model returned unreadable JSON: ${exc.message}")
+        }
+        val embeddings = parsed.embeddings
         if (embeddings == null || embeddings.size != texts.size) {
-            val got = embeddings?.size?.toString() ?: "null"
             throw SimpleSemanticException(
-                "$model returned $got embeddings for ${texts.size} inputs. If this says 1, " +
-                    "the API aggregated the batch into a single vector.",
+                "$model returned ${embeddings?.size ?: "null"} embeddings for ${texts.size} " +
+                    "inputs. If this says 1, the API aggregated the batch into a single vector.",
             )
         }
-        return embeddings.map { entry ->
-            @Suppress("UNCHECKED_CAST")
-            val values = (entry as Map<String, Any?>)["values"] as List<*>
-            if (values.size != dimension) {
+        return embeddings.map { embedding ->
+            if (embedding.values.size != dimension) {
                 throw SimpleSemanticException(
-                    "$model returned ${values.size} dimensions, expected $dimension",
+                    "$model returned ${embedding.values.size} dimensions, expected $dimension",
                 )
             }
-            FloatArray(values.size) { i -> (values[i] as Number).toFloat() }
+            embedding.values.toFloatArray()
         }
     }
 

@@ -1,14 +1,15 @@
 package dev.simplesemantic
 
 /**
- * Canonical JSON — SPEC.md §7. Hand-written, both directions.
+ * The canonical JSON encoder — SPEC.md §7.
  *
- * No JVM JSON library guarantees all four rules by default: separator style,
- * key ordering, escape selection, and literal non-ASCII output.
+ * Hand-written because no JVM JSON library guarantees all four rules by default:
+ * separator style, key ordering, escape selection, and literal non-ASCII output,
+ * and byte-identity between the two implementations depends on all four.
+ *
+ * Decoding has no such constraint and is declarative — see Wire.kt.
  */
 public object CanonicalJson {
-
-    // ------------------------------------------------------------------ encode
 
     /**
      * Encode an object whose key order is already correct. Pass a
@@ -148,178 +149,4 @@ public object CanonicalJson {
 
     /** Lowercase hex, per SPEC.md §7 rule 3. Only the C0 controls need it. */
     private val HEX: Array<String> = Array(0x20) { String.format("%04x", it) }
-
-    // ------------------------------------------------------------------ decode
-
-    /**
-     * Parse a JSON object into `Map<String, Any?>`.
-     *
-     * Values come back as `String`, `Long`, `Double`, `Boolean`, `null`,
-     * `List<Any?>` or `Map<String, Any?>`. Doubles parse but cannot be
-     * re-encoded — see [MetaValueException].
-     */
-    public fun parseObject(input: String): Map<String, Any?> {
-        val parser = Parser(input)
-        parser.skipWhitespace()
-        val value = parser.parseValue()
-        parser.skipWhitespace()
-        if (!parser.atEnd()) throw JsonException("trailing content at offset ${parser.offset}")
-        @Suppress("UNCHECKED_CAST")
-        return value as? Map<String, Any?>
-            ?: throw JsonException("expected a JSON object, got ${value?.javaClass?.simpleName}")
-    }
-
-    private class Parser(private val input: String) {
-        var offset: Int = 0
-
-        fun atEnd(): Boolean = offset >= input.length
-
-        fun skipWhitespace() {
-            while (offset < input.length && input[offset].isJsonWhitespace()) offset++
-        }
-
-        private fun Char.isJsonWhitespace(): Boolean =
-            this == ' ' || this == '\t' || this == '\n' || this == '\r'
-
-        fun parseValue(): Any? {
-            if (atEnd()) throw JsonException("unexpected end of input")
-            return when (val ch = input[offset]) {
-                '{' -> parseObject()
-                '[' -> parseArray()
-                '"' -> parseString()
-                't' -> literal("true", true)
-                'f' -> literal("false", false)
-                'n' -> literal("null", null)
-                else ->
-                    if (ch == '-' || ch in '0'..'9') {
-                        parseNumber()
-                    } else {
-                        throw JsonException("unexpected character '$ch' at offset $offset")
-                    }
-            }
-        }
-
-        private fun literal(text: String, value: Any?): Any? {
-            if (!input.startsWith(text, offset)) {
-                throw JsonException("expected '$text' at offset $offset")
-            }
-            offset += text.length
-            return value
-        }
-
-        private fun parseObject(): Map<String, Any?> {
-            expect('{')
-            val entries = LinkedHashMap<String, Any?>()
-            skipWhitespace()
-            if (peek() == '}') {
-                offset++
-                return entries
-            }
-            while (true) {
-                skipWhitespace()
-                val key = parseString()
-                skipWhitespace()
-                expect(':')
-                skipWhitespace()
-                entries[key] = parseValue()
-                skipWhitespace()
-                when (val ch = next()) {
-                    ',' -> continue
-                    '}' -> return entries
-                    else -> throw JsonException("expected ',' or '}' but found '$ch' at $offset")
-                }
-            }
-        }
-
-        private fun parseArray(): List<Any?> {
-            expect('[')
-            val items = ArrayList<Any?>()
-            skipWhitespace()
-            if (peek() == ']') {
-                offset++
-                return items
-            }
-            while (true) {
-                skipWhitespace()
-                items.add(parseValue())
-                skipWhitespace()
-                when (val ch = next()) {
-                    ',' -> continue
-                    ']' -> return items
-                    else -> throw JsonException("expected ',' or ']' but found '$ch' at $offset")
-                }
-            }
-        }
-
-        private fun parseString(): String {
-            expect('"')
-            val builder = StringBuilder()
-            while (true) {
-                if (atEnd()) throw JsonException("unterminated string")
-                when (val ch = input[offset++]) {
-                    '"' -> return builder.toString()
-                    '\\' -> builder.append(parseEscape())
-                    else -> builder.append(ch)
-                }
-            }
-        }
-
-        private fun parseEscape(): Char {
-            if (atEnd()) throw JsonException("unterminated escape")
-            return when (val ch = input[offset++]) {
-                '"', '\\', '/' -> ch
-                'b' -> '\b'
-                'f' -> '\u000C'
-                'n' -> '\n'
-                'r' -> '\r'
-                't' -> '\t'
-                'u' -> {
-                    if (offset + 4 > input.length) throw JsonException("truncated \\u escape")
-                    val hex = input.substring(offset, offset + 4)
-                    offset += 4
-                    hex.toIntOrNull(16)?.toChar()
-                        ?: throw JsonException("invalid \\u escape '$hex'")
-                }
-                else -> throw JsonException("invalid escape '\\$ch' at offset $offset")
-            }
-        }
-
-        private fun parseNumber(): Any {
-            val start = offset
-            if (peek() == '-') offset++
-            while (!atEnd() && input[offset] in '0'..'9') offset++
-            var integral = true
-            if (!atEnd() && input[offset] == '.') {
-                integral = false
-                offset++
-                while (!atEnd() && input[offset] in '0'..'9') offset++
-            }
-            if (!atEnd() && (input[offset] == 'e' || input[offset] == 'E')) {
-                integral = false
-                offset++
-                if (!atEnd() && (input[offset] == '+' || input[offset] == '-')) offset++
-                while (!atEnd() && input[offset] in '0'..'9') offset++
-            }
-            val text = input.substring(start, offset)
-            return if (integral) {
-                text.toLongOrNull() ?: throw JsonException("integer out of 64-bit range: $text")
-            } else {
-                text.toDouble()
-            }
-        }
-
-        private fun peek(): Char? = if (atEnd()) null else input[offset]
-
-        private fun next(): Char {
-            if (atEnd()) throw JsonException("unexpected end of input")
-            return input[offset++]
-        }
-
-        private fun expect(ch: Char) {
-            if (atEnd() || input[offset] != ch) {
-                throw JsonException("expected '$ch' at offset $offset")
-            }
-            offset++
-        }
-    }
 }

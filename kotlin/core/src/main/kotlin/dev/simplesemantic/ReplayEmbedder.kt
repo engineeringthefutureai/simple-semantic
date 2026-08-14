@@ -48,52 +48,40 @@ public class ReplayEmbedder(
     public companion object {
         /** Load a fixture written by `conformance/stories/build_fixture.py`. */
         public fun fromFile(path: Path): ReplayEmbedder {
-            val raw = CanonicalJson.parseObject(Files.readString(path, Charsets.UTF_8))
-
-            for (key in listOf("embedder_id", "dimension", "documents", "queries")) {
-                if (!raw.containsKey(key)) {
-                    throw SimpleSemanticException("$path: fixture is missing '$key'")
-                }
+            val wire = try {
+                WireJson.decodeFromString(
+                    FixtureWire.serializer(),
+                    Files.readString(path, Charsets.UTF_8),
+                )
+            } catch (exc: kotlinx.serialization.SerializationException) {
+                throw SimpleSemanticException("$path: not a valid fixture (${exc.message})")
             }
 
-            val dimension = (raw["dimension"] as? Long)?.toInt()
-                ?: throw SimpleSemanticException("$path: 'dimension' is not an integer")
-            val embedderId = raw["embedder_id"] as? String
-                ?: throw SimpleSemanticException("$path: 'embedder_id' is not a string")
-            if (!embedderId.endsWith("@$dimension")) {
+            if (!wire.embedderId.endsWith("@${wire.dimension}")) {
                 // Repeated at load time: a fixture can be hand-edited after generation.
                 throw SimpleSemanticException(
-                    "$path: embedder_id '$embedderId' disagrees with dimension $dimension",
+                    "$path: embedder_id '${wire.embedderId}' disagrees with " +
+                        "dimension ${wire.dimension}",
                 )
             }
 
-            fun load(section: String): Map<String, FloatArray> {
-                val entries = raw[section] as? List<*>
-                    ?: throw SimpleSemanticException("$path: '$section' is not an array")
-                val out = HashMap<String, FloatArray>(entries.size)
-                for (entry in entries) {
-                    @Suppress("UNCHECKED_CAST")
-                    val record = entry as Map<String, Any?>
-                    val values = record["vector"] as? List<*>
-                        ?: throw SimpleSemanticException("$path: $section entry has no vector")
-                    if (values.size != dimension) {
+            fun vectors(section: String, records: List<FixtureRecordWire>) =
+                records.associate { record ->
+                    if (record.vector.size != wire.dimension) {
                         throw SimpleSemanticException(
-                            "$path: $section entry ${record["id"] ?: record["key"]} has " +
-                                "${values.size} dimensions, expected $dimension",
+                            "$path: $section entry ${record.id.ifEmpty { record.key }} has " +
+                                "${record.vector.size} dimensions, expected ${wire.dimension}",
                         )
                     }
-                    out[record["key"] as String] =
-                        FloatArray(values.size) { i -> (values[i] as Number).toFloat() }
+                    record.key to record.vector.toFloatArray()
                 }
-                return out
-            }
 
             return ReplayEmbedder(
-                id = embedderId,
-                dimension = dimension,
-                documents = load("documents"),
-                queries = load("queries"),
-                producesNormalized = raw["normalized"] as? Boolean ?: false,
+                id = wire.embedderId,
+                dimension = wire.dimension,
+                documents = vectors("documents", wire.documents),
+                queries = vectors("queries", wire.queries),
+                producesNormalized = wire.normalized,
                 source = path.toString(),
             )
         }

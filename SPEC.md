@@ -246,6 +246,10 @@ Python's `json.dumps(obj, ensure_ascii=False, separators=(",", ":"))` satisfies
 these for the permitted types. Kotlin hand-writes an encoder, because no JVM
 JSON library guarantees all four by default.
 
+These rules constrain **encoding** only. Decoding is ordinary JSON parsing, and
+both implementations do it declaratively against typed shapes rather than by
+reaching into a parsed map.
+
 ### 7.2 Permitted `meta` value types
 
 - string, boolean, null

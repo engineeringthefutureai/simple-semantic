@@ -13,11 +13,11 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
 from .errors import SimpleSemanticError
+from .wire import FixtureRecordWire, FixtureWire
 
 
 class ReplayMissError(SimpleSemanticError):
@@ -73,38 +73,34 @@ class ReplayEmbedder:
     def from_file(cls, path: str | Path) -> ReplayEmbedder:
         """Load a fixture written by ``conformance/stories/build_fixture.py``."""
         fixture_path = Path(path)
-        raw: dict[str, Any] = json.loads(fixture_path.read_text(encoding="utf-8"))
+        wire = FixtureWire.from_json(
+            json.loads(fixture_path.read_text(encoding="utf-8")), str(fixture_path)
+        )
 
-        for key in ("embedder_id", "dimension", "documents", "queries"):
-            if key not in raw:
-                raise SimpleSemanticError(f"{fixture_path}: fixture is missing {key!r}")
-
-        dimension = int(raw["dimension"])
-        embedder_id = str(raw["embedder_id"])
-        if not embedder_id.endswith(f"@{dimension}"):
+        if not wire.embedder_id.endswith(f"@{wire.dimension}"):
             # Repeated at load time: a fixture can be hand-edited after generation.
             raise SimpleSemanticError(
-                f"{fixture_path}: embedder_id {embedder_id!r} disagrees with dimension {dimension}"
+                f"{fixture_path}: embedder_id {wire.embedder_id!r} disagrees with "
+                f"dimension {wire.dimension}"
             )
 
-        def load(section: str) -> dict[str, np.ndarray]:
+        def vectors(section: str, records: list[FixtureRecordWire]) -> dict[str, np.ndarray]:
             out: dict[str, np.ndarray] = {}
-            for record in raw[section]:
-                vector = np.asarray(record["vector"], dtype=np.float32)
-                if vector.shape != (dimension,):
+            for record in records:
+                if len(record.vector) != wire.dimension:
                     raise SimpleSemanticError(
-                        f"{fixture_path}: {section} entry {record.get('id', record['key'])} "
-                        f"has {vector.shape[0]} dimensions, expected {dimension}"
+                        f"{fixture_path}: {section} entry {record.id or record.key} has "
+                        f"{len(record.vector)} dimensions, expected {wire.dimension}"
                     )
-                out[str(record["key"])] = vector
+                out[record.key] = np.asarray(record.vector, dtype=np.float32)
             return out
 
         return cls(
-            embedder_id=embedder_id,
-            dimension=dimension,
-            documents=load("documents"),
-            queries=load("queries"),
-            produces_normalized=bool(raw.get("normalized", False)),
+            embedder_id=wire.embedder_id,
+            dimension=wire.dimension,
+            documents=vectors("documents", wire.documents),
+            queries=vectors("queries", wire.queries),
+            produces_normalized=wire.normalized,
             source=str(fixture_path),
         )
 

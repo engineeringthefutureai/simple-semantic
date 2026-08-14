@@ -8,13 +8,13 @@ import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
 
 from .chunker import FixedChunker
 from .embedder import Embedder, HashingEmbedder
 from .errors import SimpleSemanticError
 from .index import Document, SemanticIndex
 from .replay import ReplayEmbedder
+from .wire import DocumentWire, decode
 
 
 def _build_embedder(args: argparse.Namespace) -> Embedder:
@@ -47,14 +47,10 @@ def _read_documents(source: Path | None) -> list[Document]:
             if not line:
                 continue
             try:
-                obj: dict[str, Any] = json.loads(line)
+                wire = decode(DocumentWire, json.loads(line), f"line {number}")
             except ValueError as exc:
                 raise SimpleSemanticError(f"line {number}: not valid JSON ({exc})") from exc
-            if "id" not in obj or "text" not in obj:
-                raise SimpleSemanticError(f"line {number}: needs both 'id' and 'text'")
-            documents.append(
-                Document(id=str(obj["id"]), text=str(obj["text"]), meta=dict(obj.get("meta") or {}))
-            )
+            documents.append(Document(id=wire.id, text=wire.text, meta=dict(wire.meta)))
         return documents
     finally:
         if source is not None:

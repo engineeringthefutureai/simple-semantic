@@ -79,47 +79,27 @@ public data class Manifest(
 
     public companion object {
         public fun decode(raw: String, path: String): Manifest {
-            val obj = try {
-                CanonicalJson.parseObject(raw)
-            } catch (exc: JsonException) {
+            val wire = try {
+                WireJson.decodeFromString(ManifestWire.serializer(), raw)
+            } catch (exc: kotlinx.serialization.SerializationException) {
                 throw CorruptIndexException("$path: manifest is not valid JSON (${exc.message})")
             }
-
-            val version = obj["format_version"]
-            if (version != FORMAT_VERSION.toLong()) {
-                throw FormatVersionException(path, version, FORMAT_VERSION)
+            if (wire.formatVersion != FORMAT_VERSION) {
+                throw FormatVersionException(path, wire.formatVersion, FORMAT_VERSION)
             }
-
-            val required = listOf(
-                "embedder_id", "dimension", "chunker_id",
-                "row_count", "live_count", "created_at", "updated_at",
-            )
-            val missing = required.filterNot { obj.containsKey(it) }
-            if (missing.isNotEmpty()) {
-                throw CorruptIndexException("$path: manifest is missing keys $missing")
-            }
-
             return Manifest(
-                embedderId = obj.string("embedder_id", path),
-                dimension = obj.int("dimension", path),
-                chunkerId = obj.string("chunker_id", path),
-                rowCount = obj.int("row_count", path),
-                liveCount = obj.int("live_count", path),
-                createdAt = obj.string("created_at", path),
-                updatedAt = obj.string("updated_at", path),
-                formatVersion = FORMAT_VERSION,
-                normalized = obj["normalized"] as? Boolean ?: true,
-                hashAlgorithm = obj["hash_algorithm"] as? String ?: "sha256",
+                embedderId = wire.embedderId,
+                dimension = wire.dimension,
+                chunkerId = wire.chunkerId,
+                rowCount = wire.rowCount,
+                liveCount = wire.liveCount,
+                createdAt = wire.createdAt,
+                updatedAt = wire.updatedAt,
+                formatVersion = wire.formatVersion,
+                normalized = wire.normalized,
+                hashAlgorithm = wire.hashAlgorithm,
             )
         }
-
-        private fun Map<String, Any?>.string(key: String, path: String): String =
-            this[key] as? String
-                ?: throw CorruptIndexException("$path: manifest key '$key' is not a string")
-
-        private fun Map<String, Any?>.int(key: String, path: String): Int =
-            (this[key] as? Long)?.toInt()
-                ?: throw CorruptIndexException("$path: manifest key '$key' is not an integer")
     }
 }
 

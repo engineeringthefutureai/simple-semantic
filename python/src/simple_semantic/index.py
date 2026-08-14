@@ -19,6 +19,7 @@ from . import canonical_json
 from . import format as fmt
 from .embedder import Embedder, normalize_row, normalize_rows
 from .errors import CorruptIndexError, EmbedderMismatchError, SimpleSemanticError
+from .wire import DocumentWire, decode
 
 DEFAULT_CHUNKER_ID = "none"
 
@@ -158,9 +159,9 @@ class SemanticIndex:
                         f"{docs_path} has more than the {self._manifest.row_count} lines "
                         f"the manifest declares"
                     )
-                obj = canonical_json.decode_line(raw.rstrip(b"\n"))
-                self._ids.append(str(obj["id"]))
-                self._hashes.append(str(obj["hash"]))
+                document = self._decode_line(raw.rstrip(b"\n"), str(docs_path))
+                self._ids.append(document.id)
+                self._hashes.append(document.hash)
         if len(self._ids) != self._manifest.row_count:
             raise CorruptIndexError(
                 f"{docs_path} has {len(self._ids)} lines but the manifest declares "
@@ -236,8 +237,17 @@ class SemanticIndex:
         with open(self._path / fmt.DOCS, "rb") as handle:
             handle.seek(start)
             raw = handle.read(end - start)
-        obj = canonical_json.decode_line(raw.rstrip(b"\n"))
-        return Document(id=str(obj["id"]), text=str(obj["text"]), meta=dict(obj.get("meta") or {}))
+        wire = self._decode_line(raw.rstrip(b"\n"), str(self._path / fmt.DOCS))
+        return Document(id=wire.id, text=wire.text, meta=dict(wire.meta))
+
+    @staticmethod
+    def _decode_line(raw: bytes, source: str) -> DocumentWire:
+        try:
+            return decode(DocumentWire, canonical_json.decode_line(raw), source)
+        except SimpleSemanticError as exc:
+            raise CorruptIndexError(str(exc)) from exc
+        except ValueError as exc:
+            raise CorruptIndexError(f"{source}: invalid document line ({exc})") from exc
 
     # ------------------------------------------------------------------ writes
 

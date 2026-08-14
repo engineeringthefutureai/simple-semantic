@@ -203,3 +203,50 @@ def test_normalization_is_idempotent() -> None:
     once = normalize_row(raw)
     twice = normalize_row(once)
     assert np.array_equal(once, twice)
+
+
+def test_manifest_decoding_names_a_missing_field(tmp_path: Path) -> None:
+    """Declarative decoding, so the error names the field rather than raising KeyError."""
+    manifest = {
+        "format_version": 1,
+        "embedder_id": "hashing-0@64",
+        "dimension": 64,
+        "chunker_id": "none",
+        "row_count": 0,
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+    }  # live_count omitted
+    path = tmp_path / fmt.MANIFEST
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(CorruptIndexError) as caught:
+        fmt.read_manifest(tmp_path)
+    assert "live_count" in str(caught.value)
+
+
+def test_manifest_decoding_names_a_mistyped_field(tmp_path: Path) -> None:
+    manifest = {
+        "format_version": 1,
+        "embedder_id": "hashing-0@64",
+        "dimension": "sixty-four",
+        "chunker_id": "none",
+        "row_count": 0,
+        "live_count": 0,
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+    }
+    (tmp_path / fmt.MANIFEST).write_text(json.dumps(manifest))
+    with pytest.raises(CorruptIndexError) as caught:
+        fmt.read_manifest(tmp_path)
+    assert "dimension" in str(caught.value)
+    assert "str" in str(caught.value)
+
+
+async def test_a_document_line_missing_text_is_reported(index: SemanticIndex) -> None:
+    """Every line is decoded at open, so a corrupt one fails there."""
+    await index.add_all([Document(id="a", text="hello")])
+    index.close()
+    (index.path / fmt.DOCS).write_bytes(b'{"id":"a","meta":{},"hash":"x"}\n')
+
+    with pytest.raises(CorruptIndexError) as caught:
+        SemanticIndex.open(index.path, HashingEmbedder(dimension=64))
+    assert "text" in str(caught.value)

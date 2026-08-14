@@ -213,9 +213,9 @@ Requires **JDK 22 or newer** (the Foreign Function & Memory API is final there)
 and **Python 3.11+**.
 
 ```console
-$ cd kotlin && ./gradlew build               # 71 tests
+$ cd kotlin && ./gradlew build               # 73 tests
 $ cd python && uv venv .venv && uv pip install -e ".[dev]"
-$ cd python && .venv/bin/python -m pytest    # 75 tests
+$ cd python && .venv/bin/python -m pytest    # 78 tests
 $ ./conformance/run.sh
 ```
 

@@ -28,20 +28,19 @@ class StoriesSpec : StringSpec({
     val fixture = repoRoot.resolve("conformance/fixtures/story-embeddings-v1.json")
     val storiesDir = repoRoot.resolve("conformance/stories")
 
-    @Suppress("UNCHECKED_CAST")
-    fun fixtureRecords(section: String): List<Map<String, Any?>> =
-        CanonicalJson.parseObject(Files.readString(fixture, Charsets.UTF_8))[section]
-            as List<Map<String, Any?>>
+    fun recorded(): FixtureWire =
+        WireJson.decodeFromString(
+            FixtureWire.serializer(),
+            Files.readString(fixture, Charsets.UTF_8),
+        )
 
     /** Story id to text. The fixture carries ids and filenames beside the vectors. */
     fun stories(): List<Pair<String, String>> =
-        fixtureRecords("documents").map { record ->
-            record["id"] as String to Files.readString(storiesDir.resolve(record["file"] as String))
-        }
+        recorded().documents.map { it.id to Files.readString(storiesDir.resolve(it.file)) }
 
     /** Prompt to target-story id; a blank target marks a negative control. */
     fun queries(): List<Pair<String, String>> =
-        fixtureRecords("queries").map { it["prompt"] as String to it["target"] as String }
+        recorded().queries.map { it.prompt to it.target }
 
     fun index(): SemanticIndex = SemanticIndex.create(
         tempdir().toPath().resolve("stories.index"),

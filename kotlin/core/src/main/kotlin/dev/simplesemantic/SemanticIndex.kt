@@ -220,9 +220,9 @@ public class SemanticIndex private constructor(
         Files.newBufferedReader(docsPath, Charsets.UTF_8).use { reader ->
             var line = reader.readLine()
             while (line != null) {
-                val obj = CanonicalJson.parseObject(line)
-                ids.add(obj["id"] as? String ?: throw CorruptIndexException("$docsPath: missing id"))
-                hashes.add(obj["hash"] as? String ?: "")
+                val document = decodeDocumentLine(line, docsPath.toString())
+                ids.add(document.id)
+                hashes.add(document.hash)
                 line = reader.readLine()
             }
         }
@@ -274,13 +274,14 @@ public class SemanticIndex private constructor(
             file.readFully(buffer)
         }
         val line = String(buffer, Charsets.UTF_8).trimEnd('\n')
-        val obj = CanonicalJson.parseObject(line)
-        @Suppress("UNCHECKED_CAST")
-        return Document(
-            id = obj["id"] as String,
-            text = obj["text"] as String,
-            meta = (obj["meta"] as? Map<String, Any?>) ?: emptyMap(),
-        )
+        val wire = decodeDocumentLine(line, path.resolve(FileNames.DOCS).toString())
+        return Document(id = wire.id, text = wire.text, meta = wire.meta.toMetaMap())
+    }
+
+    private fun decodeDocumentLine(line: String, source: String): DocumentWire = try {
+        WireJson.decodeFromString(DocumentWire.serializer(), line)
+    } catch (exc: kotlinx.serialization.SerializationException) {
+        throw CorruptIndexException("$source: invalid document line (${exc.message})")
     }
 
     // ------------------------------------------------------------------ writes

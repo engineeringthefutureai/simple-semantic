@@ -13,7 +13,8 @@ from typing import Any
 import numpy as np
 
 from . import canonical_json
-from .errors import CorruptIndexError, FormatVersionError
+from .errors import CorruptIndexError, FormatVersionError, SimpleSemanticError
+from .wire import ManifestWire, decode
 
 FORMAT_VERSION = 1
 
@@ -93,33 +94,22 @@ class Manifest:
         if version != FORMAT_VERSION:
             raise FormatVersionError(path, version, FORMAT_VERSION)
 
-        missing = [
-            key
-            for key in (
-                "embedder_id",
-                "dimension",
-                "chunker_id",
-                "row_count",
-                "live_count",
-                "created_at",
-                "updated_at",
-            )
-            if key not in obj
-        ]
-        if missing:
-            raise CorruptIndexError(f"{path}: manifest is missing keys {missing}")
+        try:
+            wire = decode(ManifestWire, obj, path)
+        except SimpleSemanticError as exc:
+            raise CorruptIndexError(str(exc)) from exc
 
         return Manifest(
-            embedder_id=str(obj["embedder_id"]),
-            dimension=int(obj["dimension"]),
-            chunker_id=str(obj["chunker_id"]),
-            row_count=int(obj["row_count"]),
-            live_count=int(obj["live_count"]),
-            created_at=str(obj["created_at"]),
-            updated_at=str(obj["updated_at"]),
-            format_version=int(version),
-            normalized=bool(obj.get("normalized", True)),
-            hash_algorithm=str(obj.get("hash_algorithm", "sha256")),
+            embedder_id=wire.embedder_id,
+            dimension=wire.dimension,
+            chunker_id=wire.chunker_id,
+            row_count=wire.row_count,
+            live_count=wire.live_count,
+            created_at=wire.created_at,
+            updated_at=wire.updated_at,
+            format_version=wire.format_version,
+            normalized=wire.normalized,
+            hash_algorithm=wire.hash_algorithm,
         )
 
 
