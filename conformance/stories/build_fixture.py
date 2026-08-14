@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """Turn the helper YAML into a language-neutral fixture both implementations read.
 
-The YAML files in this directory are the helper's working format: convenient to
-diff, convenient to hand-edit, and readable only with a YAML library. The
-library's core takes numpy and an HTTP client and nothing else (see CLAUDE.md),
-and the Kotlin implementation has no YAML parser at all — so the tested artifact
-is JSON, generated from the YAML by this script.
+The YAML in this directory is the helper's working format. The library takes
+numpy and an HTTP client and nothing else, and Kotlin has no YAML parser, so the
+tested artifact is JSON, generated from the YAML by this script.
 
 Output: ``conformance/fixtures/story-embeddings-v1.json``
 
@@ -13,21 +11,20 @@ Output: ``conformance/fixtures/story-embeddings-v1.json``
       "fixture_version": 1,
       "embedder_id": "gemini-embedding-001@768",
       "dimension": 768,
-      "documents": [{"key": "<sha256 of the embedded text>", "vector": [...]}],
-      "queries":   [{"key": "<sha256 of the embedded text>", "vector": [...]}]
+      "documents": [{"id": ..., "file": ..., "key": "<sha256>", "vector": [...]}],
+      "queries":   [{"prompt": ..., "target": ..., "key": "<sha256>", "vector": [...]}]
     }
 
-Vectors are stored **exactly as the model returned them**, unnormalized.
-``gemini-embedding-001`` pre-normalizes only its default 3072-dimension output;
-at 768 the norms come back around 0.59. Keeping them that way is deliberate: it
-means the test suite exercises SPEC.md §3.1 write-time normalization against
-real unnormalized input rather than against a vector that was already unit-norm.
+Carries the corpus metadata as well as the vectors, so that build_fixture.py is
+the only thing in the repo that parses the YAML. Everything downstream — both
+test suites and the conformance harness — reads this JSON.
 
-Documents and queries are kept in **separate maps** on purpose. They were
-embedded with different task types (``RETRIEVAL_DOCUMENT`` versus
-``RETRIEVAL_QUERY``), so the same text embedded both ways is two different
-vectors. A single flat map would quietly serve one where the other was meant,
-which is exactly the asymmetry the ``Embedder`` interface exists to preserve.
+Vectors are stored exactly as the model returned them, unnormalized: at 768
+dimensions ``gemini-embedding-001`` norms come back around 0.59, which is what
+exercises SPEC.md §3.1 against real input.
+
+Documents and queries are separate maps: they were embedded with different task
+types, so the same text embedded both ways is two different vectors.
 
 Usage:
     uv run --script conformance/stories/build_fixture.py
@@ -54,9 +51,7 @@ QUERY_CATEGORIES = ["short_queries", "medium_queries", "long_queries", "irreleva
 def content_key(text: str) -> str:
     """Key a recorded vector by the sha256 of the exact text that produced it.
 
-    Not by document id: a replay embedder is given text, not ids, and keying on
-    text means an edited story stops matching its stale vector instead of
-    silently keeping it.
+    Not by document id: an edited story then stops matching its stale vector.
     """
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -79,6 +74,7 @@ def load_stories(stories_dir: Path) -> tuple[list[dict[str, Any]], set[str]]:
         records.append(
             {
                 "id": entry["id"],
+                "file": entry["file"],
                 "key": content_key(text),
                 "vector": [float(v) for v in entry["embedding"]],
             }
@@ -95,8 +91,12 @@ def load_queries(stories_dir: Path) -> tuple[list[dict[str, Any]], set[str]]:
             if "embedding" not in item or not item["embedding"]:
                 raise SystemExit(f"query {item.get('prompt')!r} has no embedding")
             embedder_ids.add(str(item.get("embedder_id", "")))
+            target = str(item.get("target_story") or "")
             records.append(
                 {
+                    "prompt": item["prompt"],
+                    # Empty target marks a negative control: no correct answer.
+                    "target": "" if target == "none" else target,
                     "key": content_key(item["prompt"]),
                     "vector": [float(v) for v in item["embedding"]],
                 }
@@ -111,10 +111,8 @@ def main() -> int:
     documents, document_ids = load_stories(stories_dir)
     queries, query_ids = load_queries(stories_dir)
 
-    # One embedder for the whole fixture, or the recorded vectors are not
-    # comparable with each other. This is SPEC.md §2.1 applied to the fixture
-    # itself: mixing two models here would produce meaningless rankings with no
-    # error anywhere downstream.
+    # One embedder for the whole fixture, or the vectors are not comparable.
+    # SPEC.md §2.1 applied to the fixture itself.
     embedder_ids = {value for value in document_ids | query_ids if value}
     if len(embedder_ids) != 1:
         raise SystemExit(
@@ -141,8 +139,7 @@ def main() -> int:
         "fixture_version": FIXTURE_VERSION,
         "embedder_id": embedder_id,
         "dimension": dimension,
-        # Stated so a reader does not have to measure it to learn that these
-        # vectors are not unit-norm, and that this is expected.
+        # Stated so a reader need not measure it.
         "normalized": False,
         "documents": documents,
         "queries": queries,

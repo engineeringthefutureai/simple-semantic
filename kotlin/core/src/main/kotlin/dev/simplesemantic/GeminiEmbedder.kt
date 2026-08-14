@@ -12,21 +12,13 @@ import kotlinx.coroutines.withContext
 /**
  * The one component that makes a network call.
  *
- * Built on `java.net.http.HttpClient` from the JDK rather than a client
- * library, so that `core` keeps zero runtime dependencies beyond the Kotlin
- * stdlib and coroutines.
+ * Built on the JDK's `java.net.http.HttpClient` rather than a client library.
  *
- * Model quirks worth stating in code rather than in a wiki nobody reads:
- *
- * - `gemini-embedding-001` pre-normalizes **only** its default 3072-dimension
- *   output. Any smaller `outputDimensionality` comes back unnormalized and must
- *   be normalized by hand — which this class does unconditionally, and which
- *   the index then does again at write time.
- * - `gemini-embedding-002` does normalize truncated output, but aggregates
- *   multiple inputs in a single request into one embedding unless each input is
- *   wrapped individually. A batch loop written against `001` therefore gets one
- *   vector where it expected N, silently, against `002`. This class always
- *   wraps inputs individually, which is correct for both.
+ * Two model quirks that are silent when you get them wrong:
+ * `gemini-embedding-001` pre-normalizes only its default 3072-dimension output,
+ * and `gemini-embedding-002` aggregates a multi-input request into one
+ * embedding unless each input is wrapped individually. This class normalizes
+ * unconditionally and always wraps individually, which is correct for both.
  */
 public class GeminiEmbedder(
     private val model: String = "gemini-embedding-001",
@@ -46,7 +38,7 @@ public class GeminiEmbedder(
 
     override val id: String = "$model@$dimension"
 
-    /** Reported honestly: 001 only pre-normalizes at 3072. */
+    /** 001 only pre-normalizes at 3072; the index normalizes either way. */
     override val producesNormalized: Boolean = dimension == PRE_NORMALIZED_DIMENSION
 
     private val client: HttpClient = HttpClient.newBuilder().connectTimeout(timeout).build()
@@ -56,9 +48,7 @@ public class GeminiEmbedder(
         return request(texts, taskType = "RETRIEVAL_DOCUMENT").map { normalizeRow(it) }
     }
 
-    // Separate from embedDocuments because the task type genuinely differs.
-    // Collapsing these into one embed() is a silent quality loss that no test
-    // catches unless you already know to look for it.
+    // Separate from embedDocuments: the task type genuinely differs.
     override suspend fun embedQuery(text: String): FloatArray =
         normalizeRow(request(listOf(text), taskType = "RETRIEVAL_QUERY").single())
 
@@ -73,8 +63,7 @@ public class GeminiEmbedder(
             texts.forEachIndexed { i, text ->
                 if (i > 0) append(',')
                 append("{\"model\":\"models/").append(model).append("\",")
-                // Each input wrapped individually — see the note about
-                // gemini-embedding-002 aggregating multiple parts.
+                // Wrapped individually — see the note above.
                 append("\"content\":{\"parts\":[{\"text\":")
                 append(CanonicalJson.encodeString(text))
                 append("}]},")
@@ -86,32 +75,31 @@ public class GeminiEmbedder(
         }
 
         val body = sendWithRetry(payload)
-        val parsed = CanonicalJson.parseObject(body)
-        val embeddings = parsed["embeddings"] as? List<*>
+        val parsed = try {
+            WireJson.decodeFromString(EmbedResponseWire.serializer(), body)
+        } catch (exc: kotlinx.serialization.SerializationException) {
+            throw SimpleSemanticException("$model returned unreadable JSON: ${exc.message}")
+        }
+        val embeddings = parsed.embeddings
         if (embeddings == null || embeddings.size != texts.size) {
-            val got = embeddings?.size?.toString() ?: "null"
             throw SimpleSemanticException(
-                "$model returned $got embeddings for ${texts.size} inputs. If this says 1, " +
-                    "the API aggregated the batch into a single vector.",
+                "$model returned ${embeddings?.size ?: "null"} embeddings for ${texts.size} " +
+                    "inputs. If this says 1, the API aggregated the batch into a single vector.",
             )
         }
-        return embeddings.map { entry ->
-            @Suppress("UNCHECKED_CAST")
-            val values = (entry as Map<String, Any?>)["values"] as List<*>
-            if (values.size != dimension) {
+        return embeddings.map { embedding ->
+            if (embedding.values.size != dimension) {
                 throw SimpleSemanticException(
-                    "$model returned ${values.size} dimensions, expected $dimension",
+                    "$model returned ${embedding.values.size} dimensions, expected $dimension",
                 )
             }
-            FloatArray(values.size) { i -> (values[i] as Number).toFloat() }
+            embedding.values.toFloatArray()
         }
     }
 
     /**
-     * Retry on 429 and 5xx with exponential backoff.
-     *
-     * Retry belongs to the embedder, not to the index: the index has no idea
-     * what a rate limit is and should not grow one.
+     * Retry on 429 and 5xx with exponential backoff. Retry belongs to the
+     * embedder; the index has no idea what a rate limit is.
      */
     private suspend fun sendWithRetry(payload: String): String {
         val request = HttpRequest.newBuilder(URI.create(ENDPOINT.format(model)))

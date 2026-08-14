@@ -8,21 +8,14 @@ import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldNotContain
 import java.nio.file.Files
 
-/**
- * Update semantics. SPEC.md §6.
- *
- * Several of these are written specifically to catch the class of defect found
- * in the sibling project `simple-fts`, where an update left stale copies of a
- * document alive. The append-only row layout makes that shape of bug
- * structurally impossible here — these prove the claim rather than assuming it.
- */
+/** Update semantics. SPEC.md §6. */
 class UpdateSpec : StringSpec({
 
     fun freshIndex(): SemanticIndex =
         SemanticIndex.create(tempdir().toPath().resolve("index"), HashingEmbedder(dimension = 64))
 
     "upsert returns only the new version" {
-        // The `simple-fts` bug: a term shared by both versions returned the stale copy.
+        // A term shared by both versions must not return the stale copy.
         freshIndex().use { index ->
             val shared = "shared vocabulary appears in both revisions"
             index.addAll(listOf(Document("doc", "$shared original wording")))
@@ -81,7 +74,7 @@ class UpdateSpec : StringSpec({
     }
 
     "re-adding an identical document is a no-op" {
-        // Driven by the content hash. This is the API cost control. SPEC.md §4.1.
+        // Driven by the content hash. SPEC.md §4.1.
         freshIndex().use { index ->
             val document = Document("a", "unchanged text", mapOf("k" to "v"))
             val first = index.addAll(listOf(document))

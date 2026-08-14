@@ -5,12 +5,8 @@ import java.nio.file.Path
 import java.security.MessageDigest
 
 /**
- * The text asked for is not in the recording.
- *
- * Names the mode as well as the text, because the commonest cause is asking for
- * a document embedding of something recorded only as a query. Those are
- * genuinely different vectors — different task types — and serving one for the
- * other is a silent quality loss.
+ * The text asked for is not in the recording. Names the mode too: the commonest
+ * cause is asking for a document embedding of something recorded as a query.
  */
 public class ReplayMissException(
     mode: String,
@@ -25,23 +21,15 @@ public class ReplayMissException(
 )
 
 /**
- * Serve recorded vectors instead of calling a model.
+ * Serve recorded vectors instead of calling a model. SPEC.md appendix B.
  *
- * The third embedder, and the one that closes a real gap. [HashingEmbedder] is
- * deterministic but semantically meaningless: it can prove the *format* is
- * correct and nothing about whether search retrieves. [GeminiEmbedder]
- * retrieves properly but needs a credential, a network and money, so no test
- * suite can depend on it.
+ * Reads vectors a real model produced once, recorded to a JSON fixture both
+ * implementations parse. That makes retrieval-quality assertions runnable
+ * offline with identical numbers every run, and lets conformance prove
+ * byte-identity from real embeddings.
  *
- * This one reads vectors a real model produced once, recorded to a JSON fixture
- * that both implementations parse. That makes genuine retrieval-quality
- * assertions runnable in CI, offline, with identical numbers every run — and it
- * lets conformance prove byte-identity from *real* embeddings rather than only
- * from the hashing embedder.
- *
- * A miss is a loud error, never a zero vector or a fallback. A mock that
- * silently invents a plausible answer is the failure mode this whole project is
- * built to refuse.
+ * A miss is a loud error, never a zero vector: inventing a plausible answer
+ * would turn "not in the recording" into "retrieval quietly got worse".
  */
 public class ReplayEmbedder(
     override val id: String,
@@ -60,53 +48,40 @@ public class ReplayEmbedder(
     public companion object {
         /** Load a fixture written by `conformance/stories/build_fixture.py`. */
         public fun fromFile(path: Path): ReplayEmbedder {
-            val raw = CanonicalJson.parseObject(Files.readString(path, Charsets.UTF_8))
-
-            for (key in listOf("embedder_id", "dimension", "documents", "queries")) {
-                if (!raw.containsKey(key)) {
-                    throw SimpleSemanticException("$path: fixture is missing '$key'")
-                }
+            val wire = try {
+                WireJson.decodeFromString(
+                    FixtureWire.serializer(),
+                    Files.readString(path, Charsets.UTF_8),
+                )
+            } catch (exc: kotlinx.serialization.SerializationException) {
+                throw SimpleSemanticException("$path: not a valid fixture (${exc.message})")
             }
 
-            val dimension = (raw["dimension"] as? Long)?.toInt()
-                ?: throw SimpleSemanticException("$path: 'dimension' is not an integer")
-            val embedderId = raw["embedder_id"] as? String
-                ?: throw SimpleSemanticException("$path: 'embedder_id' is not a string")
-            if (!embedderId.endsWith("@$dimension")) {
-                // The same guard build_fixture.py applies, repeated at load time
-                // because a fixture can be hand-edited after it is generated.
+            if (!wire.embedderId.endsWith("@${wire.dimension}")) {
+                // Repeated at load time: a fixture can be hand-edited after generation.
                 throw SimpleSemanticException(
-                    "$path: embedder_id '$embedderId' disagrees with dimension $dimension",
+                    "$path: embedder_id '${wire.embedderId}' disagrees with " +
+                        "dimension ${wire.dimension}",
                 )
             }
 
-            fun load(section: String): Map<String, FloatArray> {
-                val entries = raw[section] as? List<*>
-                    ?: throw SimpleSemanticException("$path: '$section' is not an array")
-                val out = HashMap<String, FloatArray>(entries.size)
-                for (entry in entries) {
-                    @Suppress("UNCHECKED_CAST")
-                    val record = entry as Map<String, Any?>
-                    val values = record["vector"] as? List<*>
-                        ?: throw SimpleSemanticException("$path: $section entry has no vector")
-                    if (values.size != dimension) {
+            fun vectors(section: String, records: List<FixtureRecordWire>) =
+                records.associate { record ->
+                    if (record.vector.size != wire.dimension) {
                         throw SimpleSemanticException(
-                            "$path: $section entry ${record["id"] ?: record["key"]} has " +
-                                "${values.size} dimensions, expected $dimension",
+                            "$path: $section entry ${record.id.ifEmpty { record.key }} has " +
+                                "${record.vector.size} dimensions, expected ${wire.dimension}",
                         )
                     }
-                    out[record["key"] as String] =
-                        FloatArray(values.size) { i -> (values[i] as Number).toFloat() }
+                    record.key to record.vector.toFloatArray()
                 }
-                return out
-            }
 
             return ReplayEmbedder(
-                id = embedderId,
-                dimension = dimension,
-                documents = load("documents"),
-                queries = load("queries"),
-                producesNormalized = raw["normalized"] as? Boolean ?: false,
+                id = wire.embedderId,
+                dimension = wire.dimension,
+                documents = vectors("documents", wire.documents),
+                queries = vectors("queries", wire.queries),
+                producesNormalized = wire.normalized,
                 source = path.toString(),
             )
         }
@@ -119,15 +94,14 @@ public class ReplayEmbedder(
     private fun lookup(mode: String, table: Map<String, FloatArray>, text: String): FloatArray {
         val key = contentKey(text)
         val vector = table[key] ?: throw ReplayMissException(mode, text, key, source)
-        // Copy: a caller mutating the result must not corrupt the recording.
+        // Copy: a caller must not be able to mutate the recording.
         return vector.copyOf()
     }
 
     override suspend fun embedDocuments(texts: List<String>): List<FloatArray> =
         texts.map { lookup("document", documents, it) }
 
-    // Deliberately a different table from embedDocuments. The recording was made
-    // with RETRIEVAL_QUERY here and RETRIEVAL_DOCUMENT there, so the same string
-    // has two different correct answers.
+    // A different table from embedDocuments: RETRIEVAL_QUERY here,
+    // RETRIEVAL_DOCUMENT there, so the same string has two right answers.
     override suspend fun embedQuery(text: String): FloatArray = lookup("query", queries, text)
 }

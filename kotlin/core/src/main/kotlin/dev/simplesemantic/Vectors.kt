@@ -11,11 +11,8 @@ import java.nio.file.StandardOpenOption
 /**
  * `vectors.f32` — the dense matrix. SPEC.md §3.
  *
- * Mapped with the Foreign Function & Memory API rather than `ByteBuffer`.
- * `ByteBuffer` is capped at `Integer.MAX_VALUE` bytes, which at 3072 dimensions
- * is about 175,000 rows — a ceiling a real knowledge base reaches, and one that
- * forces a redesign rather than a patch when it does. `MemorySegment` maps past
- * it.
+ * Mapped with the Foreign Function & Memory API rather than `ByteBuffer`, which
+ * caps at 2 GB — about 175k rows at 3072 dimensions.
  */
 public class VectorStore private constructor(
     private val arena: Arena,
@@ -26,12 +23,8 @@ public class VectorStore private constructor(
 
     public companion object {
         /**
-         * Little-endian float32, explicitly.
-         *
-         * `ValueLayout.JAVA_FLOAT` uses the platform byte order, which is
-         * correct on x86 and silently wrong elsewhere — and JVM `ByteBuffer`
-         * defaults to big-endian outright. The format is little-endian, so the
-         * order is named here rather than inherited. `_UNALIGNED` because a
+         * Little-endian float32, explicitly: the platform-default layout is
+         * correct on x86 and silently wrong elsewhere. `_UNALIGNED` because a
          * mapped file offers no alignment guarantee the JVM will accept.
          */
         public val F32: ValueLayout.OfFloat =
@@ -77,14 +70,9 @@ public class VectorStore private constructor(
     /**
      * Cosine similarity of row [index] with an already-normalized [query].
      *
-     * A plain sequential loop, accumulating in `Double`. C2 auto-vectorizes
-     * this acceptably; the incubating Vector API would buy a constant factor at
-     * the cost of forcing `--add-modules jdk.incubator.vector` on every
-     * consumer of the library, which is not a trade worth making without a JMH
-     * number saying otherwise.
-     *
-     * Accumulation is in `Double` because a `Float` accumulator loses enough
-     * precision at 3072 dimensions to reorder near-ties (SPEC.md §8).
+     * A plain sequential loop; C2 auto-vectorizes it acceptably. `Double`
+     * accumulation because `Float` loses enough at 3072 dimensions to reorder
+     * near-ties (SPEC.md §8).
      */
     public fun dot(index: Int, query: FloatArray): Double {
         require(query.size == dimension) {
@@ -107,12 +95,9 @@ public class VectorStore private constructor(
 /**
  * L2 normalization, exactly as SPEC.md §3.1 specifies.
  *
- * The arithmetic is pinned rather than left to the language because the two
- * implementations must produce byte-identical files: sequential accumulation in
- * `Double`, ascending index, correctly-rounded `sqrt`, then a single narrowing
- * to `Float`. A pairwise or blocked sum — which any vectorized reduction is
- * free to use — differs in the last ulp of the `Double`, which is enough to
- * change the final `Float` rounding.
+ * Sequential accumulation in `Double`, ascending index, correctly-rounded
+ * `sqrt`, then one narrowing to `Float`. A pairwise or blocked sum differs in
+ * the last ulp, which changes the final `Float` rounding.
  */
 public fun normalizeRow(vector: FloatArray): FloatArray {
     var sumOfSquares = 0.0
@@ -123,9 +108,7 @@ public fun normalizeRow(vector: FloatArray): FloatArray {
     val norm = Math.sqrt(sumOfSquares)
     val out = FloatArray(vector.size)
     if (norm == 0.0) {
-        // A zero row has no direction, and 0/0 would put a NaN in the matrix
-        // that silently poisons every later dot product. e_0 is arbitrary but
-        // defined: a valid unit vector that simply ranks poorly.
+        // 0/0 would put a NaN in the matrix that poisons every later dot product.
         if (out.isNotEmpty()) out[0] = 1.0f
         return out
     }

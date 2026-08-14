@@ -26,38 +26,16 @@ async def test_scores_are_cosine_similarities_in_range(index: SemanticIndex) -> 
         assert -1.0 - 1e-9 <= result.score <= 1.0 + 1e-9
 
 
-async def test_filter_is_exact_and_applied_before_scoring(index: SemanticIndex) -> None:
+async def test_metadata_round_trips_into_results(index: SemanticIndex) -> None:
+    """Metadata is stored and returned; the index does not filter on it."""
     await index.add_all(
-        [
-            Document(id="a1", text="shared subject matter", meta={"source": "a"}),
-            Document(id="a2", text="shared subject matter", meta={"source": "a"}),
-            Document(id="b1", text="shared subject matter", meta={"source": "b"}),
-        ]
+        [Document(id="a", text="shared subject matter", meta={"source": "a", "n": 1})]
     )
-    results = await index.search("shared subject matter", k=10, filter=lambda m: m["source"] == "b")
-    assert [r.id for r in results] == ["b1"]
-
-
-async def test_filter_matching_nothing_returns_nothing(index: SemanticIndex) -> None:
-    await index.add_all([Document(id="a", text="hello", meta={"source": "a"})])
-    assert await index.search("hello", k=5, filter=lambda m: m.get("source") == "zzz") == []
-
-
-async def test_full_selectivity_filter_returns_every_live_row(index: SemanticIndex) -> None:
-    """The exactness claim: a filter that admits everything changes nothing but the work done."""
-    await index.add_all([Document(id=f"d{i}", text=f"row {i}", meta={"n": i}) for i in range(20)])
-    unfiltered = await index.search("row", k=20)
-    filtered = await index.search("row", k=20, filter=lambda m: True)
-    assert [(r.id, r.score) for r in unfiltered] == [(r.id, r.score) for r in filtered]
+    assert (await index.search("shared subject matter", k=1))[0].meta == {"source": "a", "n": 1}
 
 
 async def test_recall_is_total_by_construction(index: SemanticIndex) -> None:
-    """Every live row is scored, so the true nearest neighbour is always found.
-
-    This is the property an ANN index trades away. Here it needs no tuning
-    parameter and no recall measurement: k = live_count returns the entire
-    corpus ranked, and the brute-force top-1 is the definitional top-1.
-    """
+    """Every live row is scored, so the top-1 is the definitional top-1."""
     docs = [Document(id=f"d{i}", text=f"unique phrasing number {i} zulu") for i in range(50)]
     await index.add_all(docs)
 
@@ -129,14 +107,10 @@ def test_tokenizer_keeps_non_latin_scripts() -> None:
 
 
 def test_tokenizer_lowercases_locale_independently() -> None:
-    """Locale-independent casing, and combining marks are not token characters.
+    """Locale-independent casing; combining marks are not token characters.
 
-    ``İ`` (U+0130) lowercases to ``i`` plus a combining dot above, and the
-    combining mark is category Mn — outside ``\\p{L}\\p{N}`` — so it ends the
-    token. The JVM's ``lowercase(Locale.ROOT)`` applies the same SpecialCasing
-    rule and its ``\\p{L}\\p{N}`` excludes Mn identically, which is why
-    conformance holds. A Turkish locale would map ``I`` to ``ı`` instead and
-    the two implementations would diverge on the same input.
+    ``İ`` lowercases to ``i`` plus a combining dot, which is category Mn and so
+    ends the token. The JVM applies the same rules. SPEC.md appendix A.
     """
     assert tokenize("STRASSE Iİ") == ["strasse", "ii"]
     assert tokenize("ΟΔΟΣ") == ["οδος"]
@@ -169,11 +143,9 @@ def test_chunker_rejects_empty_and_whitespace_text() -> None:
 
 
 async def test_ties_at_the_k_boundary_keep_the_lowest_rows(index: SemanticIndex) -> None:
-    """Selection must not drop a tied row in favour of an equal-scoring later one.
+    """Selection must not drop a tied row for an equal-scoring later one.
 
-    ``np.argpartition`` alone keeps an arbitrary subset of the rows tied on the
-    k-th score, so two implementations returned different *sets* rather than
-    merely a different order — which conformance caught and this suite did not.
+    ``np.argpartition`` alone keeps an arbitrary subset of the tied rows.
     """
     await index.add_all([Document(id=f"tie{i}", text="identical scoring text") for i in range(8)])
     await index.add_all(

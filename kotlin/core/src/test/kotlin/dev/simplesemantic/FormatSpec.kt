@@ -13,13 +13,13 @@ import java.nio.file.Files
 import kotlin.math.abs
 
 /**
- * The on-disk format. SPEC.md §2-§7.
- *
- * Each test builds its own index. Sharing mutable index state across cases —
- * which the `simple-fts` specs did — makes every failure ambiguous: a broken
- * delete shows up as a failure in an unrelated search case three tests later.
+ * The on-disk format. SPEC.md §2-§7. Each test builds its own index; shared
+ * mutable state makes failures ambiguous.
  */
 class FormatSpec : StringSpec({
+
+    fun decodeDocument(line: String): DocumentWire =
+        WireJson.decodeFromString(DocumentWire.serializer(), line)
 
     fun freshIndex(name: String = "index"): SemanticIndex =
         SemanticIndex.create(tempdir().toPath().resolve(name), HashingEmbedder(dimension = 64))
@@ -46,7 +46,7 @@ class FormatSpec : StringSpec({
             val lines = Files.readAllLines(index.path.resolve(FileNames.DOCS))
             VectorStore.open(index.path.resolve(FileNames.VECTORS), 3, 64).use { store ->
                 for (row in texts.indices) {
-                    CanonicalJson.parseObject(lines[row])["text"] shouldBe texts[row]
+                    decodeDocument(lines[row]).text shouldBe texts[row]
                     val expected = HashingEmbedder(dimension = 64).embedText(texts[row])
                     store.row(row).toList() shouldContainExactly expected.toList()
                 }
@@ -89,16 +89,14 @@ class FormatSpec : StringSpec({
             for (row in 0 until 4) {
                 val line = String(raw, offsetAt(row), offsetAt(row + 1) - offsetAt(row))
                 line.endsWith("\n") shouldBe true
-                CanonicalJson.parseObject(line.trimEnd('\n'))["id"] shouldBe "d$row"
+                decodeDocument(line.trimEnd('\n')).id shouldBe "d$row"
             }
         }
     }
 
     "vectors are written little-endian" {
-        // SPEC.md §3. The JVM defaults to big-endian, so this must be pinned.
-        // Asserted at the byte level rather than by round-trip, because a
-        // round-trip through one implementation passes with either convention
-        // — it is only the *other* implementation that notices.
+        // SPEC.md §3. Asserted at the byte level: a round-trip through one
+        // implementation passes with either convention.
         val bytes = floatArrayOf(1.0f, -2.0f, 0.5f).toLittleEndianBytes()
         // 1.0f is 0x3F800000; little-endian on disk is 00 00 80 3F.
         bytes.copyOfRange(0, 4).toList() shouldContainExactly
@@ -143,8 +141,7 @@ class FormatSpec : StringSpec({
     }
 
     "meta rejects floating-point values" {
-        // SPEC.md §7.2 — not because floats are hard, but because their
-        // decimal form is not portable across languages.
+        // SPEC.md §7.2: their decimal form is not portable across languages.
         val error = shouldThrow<MetaValueException> {
             CanonicalJson.encodeDocument("id", "text", mapOf("score" to 0.5), "h")
         }
@@ -168,7 +165,7 @@ class FormatSpec : StringSpec({
     }
 
     "open refuses a different embedder" {
-        // SPEC.md §2.1: the single most important correctness rule here.
+        // SPEC.md §2.1.
         val directory = tempdir().toPath().resolve("index")
         SemanticIndex.create(directory, HashingEmbedder(dimension = 64)).use { index ->
             index.addAll(listOf(Document("a", "hello")))
@@ -193,6 +190,34 @@ class FormatSpec : StringSpec({
             SemanticIndex.open(directory, HashingEmbedder(dimension = 64))
         }
         error.message!! shouldContain "truncated"
+    }
+
+    "manifest decoding names a missing field" {
+        // Declarative decoding, so the error names the field.
+        val directory = tempdir().toPath().resolve("index")
+        SemanticIndex.create(directory, HashingEmbedder(dimension = 64)).use { }
+        val manifestFile = directory.resolve(FileNames.MANIFEST)
+        Files.writeString(
+            manifestFile,
+            Files.readString(manifestFile).replace(",\"live_count\":0", ""),
+        )
+        val error = shouldThrow<CorruptIndexException> {
+            SemanticIndex.open(directory, HashingEmbedder(dimension = 64))
+        }
+        error.message!! shouldContain "live_count"
+    }
+
+    "a document line missing text is reported" {
+        val directory = tempdir().toPath().resolve("index")
+        SemanticIndex.create(directory, HashingEmbedder(dimension = 64)).use { index ->
+            index.addAll(listOf(Document("a", "hello")))
+        }
+        Files.writeString(directory.resolve(FileNames.DOCS), "{\"id\":\"a\",\"hash\":\"x\"}\n")
+
+        val error = shouldThrow<CorruptIndexException> {
+            SemanticIndex.open(directory, HashingEmbedder(dimension = 64))
+        }
+        error.message!! shouldContain "text"
     }
 
     "open refuses an unknown format version" {
@@ -221,7 +246,7 @@ class FormatSpec : StringSpec({
         normalizeRow(once).toList() shouldContainExactly once.toList()
     }
 
-    "json parser round-trips what the encoder writes" {
+    "the decoder round-trips what the canonical encoder writes" {
         val meta = linkedMapOf<String, Any?>(
             "s" to "va\"lue\n",
             "n" to 42L,
@@ -231,12 +256,14 @@ class FormatSpec : StringSpec({
             "nested" to mapOf("k" to "v"),
         )
         val encoded = CanonicalJson.encodeDocument("id", "text", meta, "hash")
-        val parsed = CanonicalJson.parseObject(encoded)
-        parsed["id"] shouldBe "id"
-        @Suppress("UNCHECKED_CAST")
-        val roundTripped = parsed["meta"] as Map<String, Any?>
+        val decoded = decodeDocument(encoded)
+        decoded.id shouldBe "id"
+        val roundTripped = decoded.meta.toMetaMap()
         roundTripped["s"] shouldBe "va\"lue\n"
         roundTripped["n"] shouldBe 42L
+        roundTripped["b"] shouldBe true
+        roundTripped["nil"] shouldBe null
         roundTripped["list"] shouldBe listOf("a", 1L, false)
+        roundTripped["nested"] shouldBe mapOf("k" to "v")
     }
 })

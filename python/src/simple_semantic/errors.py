@@ -1,9 +1,4 @@
-"""Errors. Every one names the thing that was wrong, not just the shape of it.
-
-A bare ``KeyError`` from deep inside a library costs the reader ten minutes.
-Each error here is required by SPEC.md to carry the specific ids, paths, or
-sizes involved.
-"""
+"""Errors. Each carries the specific ids, paths or sizes involved."""
 
 from __future__ import annotations
 
@@ -15,9 +10,7 @@ class SimpleSemanticError(Exception):
 class EmbedderMismatchError(SimpleSemanticError):
     """The index was written by a different embedder than the one configured.
 
-    SPEC.md §2.1. This is the single most important guard in the project: a
-    model swap against an existing index produces no crash and no exception
-    anywhere else in the pipeline, only silently meaningless rankings.
+    SPEC.md §2.1.
     """
 
     def __init__(self, path: str, index_id: str, configured_id: str) -> None:
@@ -44,12 +37,7 @@ class CorruptIndexError(SimpleSemanticError):
 
 
 class MetaValueError(SimpleSemanticError):
-    """A meta value is outside the types the format can round-trip.
-
-    SPEC.md §7.2. Floats are rejected on purpose: their shortest round-trip
-    decimal form is not agreed on across languages, which would break
-    byte-identity between the two implementations for no benefit.
-    """
+    """A meta value is outside the types the format can round-trip. SPEC.md §7.2."""
 
     def __init__(self, key_path: str, value: object) -> None:
         super().__init__(

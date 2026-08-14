@@ -1,15 +1,14 @@
 """The index: open, add, upsert, delete, search, compact.
 
-Exact k-NN over a dense matrix is ``scores = D @ q`` followed by a top-k
-selection. That is the whole algorithm. Everything else in this file is
-bookkeeping so that the matrix stays correct across updates.
+``scores = D @ q`` then top-k. The rest is bookkeeping so that the matrix stays
+correct across updates.
 """
 
 from __future__ import annotations
 
 import os
 import shutil
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -20,11 +19,7 @@ from . import canonical_json
 from . import format as fmt
 from .embedder import Embedder, normalize_row, normalize_rows
 from .errors import CorruptIndexError, EmbedderMismatchError, SimpleSemanticError
-
-#: A metadata predicate. Receives the row's ``meta`` object, returns whether to
-#: consider the row. Applied *before* the dot products, so a selective filter
-#: makes the search cheaper rather than more expensive.
-Filter = Callable[[Mapping[str, Any]], bool]
+from .wire import DocumentWire, decode
 
 DEFAULT_CHUNKER_ID = "none"
 
@@ -49,11 +44,10 @@ class SearchResult:
 
 @dataclass(frozen=True)
 class AddResult:
-    """What :meth:`SemanticIndex.add_all` actually did.
+    """What :meth:`SemanticIndex.add_all` did.
 
-    ``skipped`` is the number of documents whose content hash already matched a
-    live row, so no embedding call was made. On a re-index of an unchanged
-    corpus this equals the corpus size, which is the entire point of the hash.
+    ``skipped`` counts documents whose content hash already matched a live row,
+    so no embedding call was made.
     """
 
     added: int
@@ -64,10 +58,8 @@ class AddResult:
 class SemanticIndex:
     """A directory of four files, plus the in-memory maps needed to serve it.
 
-    Loaded into memory at open: ids, metadata and content hashes. Not loaded:
-    document text, which is fetched through ``offsets.bin`` on demand. Holding
-    text in memory would make ``offsets.bin`` pointless and would put the
-    corpus in RAM twice.
+    Loaded at open: ids, metadata and content hashes. Not loaded: document text,
+    fetched through ``offsets.bin`` on demand.
     """
 
     def __init__(self, path: Path, embedder: Embedder) -> None:
@@ -77,7 +69,6 @@ class SemanticIndex:
         self._embedder = embedder
         self._manifest: fmt.Manifest
         self._ids: list[str] = []
-        self._metas: list[dict[str, Any]] = []
         self._hashes: list[str] = []
         self._by_id: dict[str, int] = {}
         self._offsets: np.ndarray = np.zeros(1, dtype=fmt.OFFSET_DTYPE)
@@ -127,8 +118,7 @@ class SemanticIndex:
         directory = Path(path)
         manifest = fmt.read_manifest(directory)
 
-        # SPEC.md §2.1. This check is the reason the project exists in the
-        # shape it does. Do not relax it into a warning.
+        # SPEC.md §2.1. Do not relax this into a warning.
         if manifest.embedder_id != embedder.id:
             raise EmbedderMismatchError(str(directory), manifest.embedder_id, embedder.id)
         if manifest.dimension != embedder.dimension:
@@ -155,12 +145,10 @@ class SemanticIndex:
     def _load_docs(self) -> None:
         """Scan docs.jsonl once, building the id/meta/hash arrays and the id map.
 
-        Ascending order with "latest live row wins" is what makes append-only
-        updates resolve correctly: the previous row for an id was tombstoned
-        before the new one was appended, so it never claims the id back.
+        Ascending order with "latest live row wins": the previous row for an id
+        was tombstoned before the new one was appended.
         """
         self._ids = []
-        self._metas = []
         self._hashes = []
         self._by_id = {}
         docs_path = self._path / fmt.DOCS
@@ -171,10 +159,9 @@ class SemanticIndex:
                         f"{docs_path} has more than the {self._manifest.row_count} lines "
                         f"the manifest declares"
                     )
-                obj = canonical_json.decode_line(raw.rstrip(b"\n"))
-                self._ids.append(str(obj["id"]))
-                self._metas.append(dict(obj.get("meta") or {}))
-                self._hashes.append(str(obj["hash"]))
+                document = self._decode_line(raw.rstrip(b"\n"), str(docs_path))
+                self._ids.append(document.id)
+                self._hashes.append(document.hash)
         if len(self._ids) != self._manifest.row_count:
             raise CorruptIndexError(
                 f"{docs_path} has {len(self._ids)} lines but the manifest declares "
@@ -244,27 +231,31 @@ class SemanticIndex:
         }
 
     def _document_at(self, row: int) -> Document:
-        """Fetch one document by row, via offsets.bin. SPEC.md §5.
-
-        A seek and a read of known length — no scan, and no parsing of the
-        other 12,042 lines to return ten results.
-        """
+        """Fetch one document by row, via offsets.bin. SPEC.md §5."""
         start = int(self._offsets[row])
         end = int(self._offsets[row + 1])
         with open(self._path / fmt.DOCS, "rb") as handle:
             handle.seek(start)
             raw = handle.read(end - start)
-        obj = canonical_json.decode_line(raw.rstrip(b"\n"))
-        return Document(id=str(obj["id"]), text=str(obj["text"]), meta=dict(obj.get("meta") or {}))
+        wire = self._decode_line(raw.rstrip(b"\n"), str(self._path / fmt.DOCS))
+        return Document(id=wire.id, text=wire.text, meta=dict(wire.meta))
+
+    @staticmethod
+    def _decode_line(raw: bytes, source: str) -> DocumentWire:
+        try:
+            return decode(DocumentWire, canonical_json.decode_line(raw), source)
+        except SimpleSemanticError as exc:
+            raise CorruptIndexError(str(exc)) from exc
+        except ValueError as exc:
+            raise CorruptIndexError(f"{source}: invalid document line ({exc})") from exc
 
     # ------------------------------------------------------------------ writes
 
     async def add_all(self, documents: Iterable[Document]) -> AddResult:
         """Add or replace documents. Unchanged content is not re-embedded.
 
-        The skip is keyed on the content hash from SPEC.md §4.1, which folds in
-        the embedder and chunker ids — so changing either correctly forces a
-        re-embed even when the text is identical.
+        Keyed on the content hash from SPEC.md §4.1, which folds in the embedder
+        and chunker ids.
         """
         docs = list(documents)
         if not docs:
@@ -292,15 +283,12 @@ class SemanticIndex:
         if not pending:
             return AddResult(0, 0, skipped)
 
-        # Validate every meta before embedding: an embedding call costs money,
-        # and failing after spending it would be rude.
+        # Validate before embedding: an embedding call costs money.
         for doc, _ in pending:
             canonical_json.validate_meta(doc.meta)
 
         vectors = await self._embed_documents([doc.text for doc, _ in pending])
-        # Normalized at write time regardless of what the embedder claims.
-        # Idempotent, one pass, and it makes the index immune to a model that
-        # quietly changes its output convention. SPEC.md §3.1.
+        # Normalized at write time whatever the embedder claims. SPEC.md §3.1.
         vectors = normalize_rows(vectors)
 
         replaced = 0
@@ -325,7 +313,6 @@ class SemanticIndex:
             next_offset += len(line)
             new_offsets.append(next_offset)
             self._ids.append(doc.id)
-            self._metas.append(dict(doc.meta))
             self._hashes.append(digest)
             self._by_id[doc.id] = row
 
@@ -339,9 +326,8 @@ class SemanticIndex:
     async def _embed_documents(self, texts: list[str]) -> np.ndarray:
         """Embed in batches the embedder declares it can take.
 
-        Batching lives here rather than in the embedder's caller so that no
-        code path can accidentally call the embedder once per document in a
-        loop over results.
+        Batching lives here so no code path can call the embedder once per
+        document in a loop over results.
         """
         limit = max(1, self._embedder.max_batch_size)
         blocks: list[np.ndarray] = []
@@ -369,11 +355,9 @@ class SemanticIndex:
     ) -> None:
         """Append to all four files, then commit by rewriting the manifest.
 
-        Order matters. The manifest is written last because it is the only file
-        that declares how long the others should be: a crash before it leaves a
-        vectors.f32 longer than row_count implies, which the length check in
-        SPEC.md §2.2 catches loudly on the next open rather than serving
-        garbage rows.
+        The manifest is written last because it declares how long the others
+        should be: a crash before it leaves a vectors.f32 longer than row_count
+        implies, which SPEC.md §2.2's length check catches on the next open.
         """
         self.close_mapping()
         with open(self._path / fmt.VECTORS, "ab") as handle:
@@ -427,9 +411,7 @@ class SemanticIndex:
         """Rewrite the index without tombstoned rows. Returns rows dropped.
 
         Crash-safe: the new index is built complete in a sibling directory and
-        fsynced before anything in place is touched. A compaction that
-        truncated the original first and then failed would leave a corrupt
-        index that the length check detects only after the data is gone.
+        fsynced before anything in place is touched.
         """
         dropped = self._manifest.row_count - self._manifest.live_count
         if dropped == 0:
@@ -495,24 +477,18 @@ class SemanticIndex:
 
     # ------------------------------------------------------------------ search
 
-    async def search(
-        self, query: str, k: int = 10, filter: Filter | None = None
-    ) -> list[SearchResult]:
+    async def search(self, query: str, k: int = 10) -> list[SearchResult]:
         """Embed the query, then run exact k-NN over the live rows."""
         if not query.strip():
-            # An empty query has no direction. Returning nothing beats
-            # returning whatever the zero-vector fallback happens to be near.
+            # No direction; better than ranking against the e_0 fallback.
             return []
-        vector = await self._embedder.embed_query(query)
-        return self.search_vector(vector, k=k, filter=filter)
+        return self.search_vector(await self._embedder.embed_query(query), k=k)
 
-    def search_vector(
-        self, query_vector: np.ndarray, k: int = 10, filter: Filter | None = None
-    ) -> list[SearchResult]:
+    def search_vector(self, query_vector: np.ndarray, k: int = 10) -> list[SearchResult]:
         """Exact k-NN against a pre-computed query vector.
 
-        Public because a caller with their own embedding — a cached one, or a
-        centroid of several — should not have to go back through the embedder.
+        Public so a caller with a cached embedding or a centroid need not go
+        back through the embedder.
         """
         if k <= 0:
             return []
@@ -525,23 +501,11 @@ class SemanticIndex:
                 f"query vector has shape {query.shape}, expected ({self._manifest.dimension},)"
             )
 
-        mask = self._tombstones.live_mask()
-        if filter is not None:
-            # The filter is a boolean mask applied before the dot products, so
-            # a more selective filter means strictly less work. An ANN index
-            # has to choose between pre-filtering, which strands graph
-            # traversal in disconnected regions, and post-filtering, which
-            # fetches top-N and hopes enough survive.
-            for candidate in np.flatnonzero(mask).tolist():
-                if not filter(self._metas[candidate]):
-                    mask[candidate] = False
-
-        rows = np.flatnonzero(mask)
+        rows = np.flatnonzero(self._tombstones.live_mask())
         if rows.size == 0:
             return []
 
-        # float64 accumulation: at 3072 dimensions a float32 dot loses enough
-        # precision to reorder near-ties.
+        # float64: a float32 dot loses enough at 3072 dimensions to reorder near-ties.
         if rows.size == self._manifest.row_count:
             matrix = np.asarray(self._vectors, dtype=np.float64)
         else:
@@ -550,17 +514,11 @@ class SemanticIndex:
 
         limit = min(k, rows.size)
         if limit < rows.size:
-            # O(n) selection, not an O(n log n) sort of everything. The Kotlin
-            # side uses a bounded min-heap; both are the same complexity claim.
-            #
-            # argpartition alone is not enough: when several rows tie on the
-            # k-th score it keeps an arbitrary subset of them, so two
-            # implementations would return different *sets* rather than merely
-            # a different order. SPEC.md §8 breaks ties by ascending row, so
-            # take everything strictly better than the k-th score and fill the
-            # remainder from the tied rows in row order. np.flatnonzero returns
-            # ascending indices and `rows` is ascending, so "first tied" is
-            # "lowest row". Still three O(n) passes, still no full sort.
+            # O(n) selection, no full sort. argpartition alone keeps an
+            # arbitrary subset of the rows tied on the k-th score, so take
+            # everything strictly better and fill from the tied rows in row
+            # order. SPEC.md §8. flatnonzero returns ascending indices and
+            # `rows` is ascending, so "first tied" is "lowest row".
             threshold = scores[np.argpartition(-scores, limit - 1)[limit - 1]]
             better = np.flatnonzero(scores > threshold)
             tied = np.flatnonzero(scores == threshold)
@@ -570,8 +528,7 @@ class SemanticIndex:
 
         selected_scores = scores[candidates]
         selected_rows = rows[candidates]
-        # Ties break by ascending row index (SPEC.md §8) so that both
-        # implementations return identical orderings for identical scores.
+        # Ties break by ascending row index. SPEC.md §8.
         order = np.lexsort((selected_rows, -selected_scores))
 
         results: list[SearchResult] = []

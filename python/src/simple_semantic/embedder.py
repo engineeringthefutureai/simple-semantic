@@ -1,10 +1,4 @@
-"""The ``Embedder`` boundary and the deterministic hashing embedder.
-
-The embedder is the one part of this project that is not neanderthal — a
-hosted model is a network call to someone else's GPU. Isolating it behind a
-narrow interface is what makes the rest of the system honest, and what makes
-the whole test suite runnable without an API key.
-"""
+"""The ``Embedder`` boundary and the deterministic hashing embedder."""
 
 from __future__ import annotations
 
@@ -14,23 +8,20 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
-# Unicode letters and numbers only. Python's ``\w`` is "alphanumeric per
-# str.isalnum(), plus underscore", and str.isalnum() covers exactly the L* and
-# N* general categories — so [^\W_] is the Unicode-correct equivalent of Java's
-# \p{L}\p{N}. An ASCII-only [a-z0-9]+ would silently drop every non-Latin
-# script, which is the kind of bug that only shows up in someone else's corpus.
+# Unicode letters and numbers only: [^\W_] is the equivalent of Java's
+# \p{L}\p{N}, because Python's \w is "alphanumeric per str.isalnum(), plus
+# underscore" and str.isalnum() covers exactly the L* and N* categories.
 _TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 
 
 @runtime_checkable
 class Embedder(Protocol):
-    """Both implementations expose this same shape. See CLAUDE.md.
+    """Both implementations expose this shape.
 
-    ``embed_documents`` and ``embed_query`` are separate methods and must stay
-    separate. Gemini needs ``taskType: RETRIEVAL_DOCUMENT`` versus
-    ``RETRIEVAL_QUERY``; e5/BGE-style models need ``passage: `` / ``query: ``
-    prefixes. A single ``embed()`` makes that asymmetry unrepresentable, and
-    getting it wrong costs retrieval quality without raising anything.
+    ``embed_documents`` and ``embed_query`` stay separate: Gemini needs
+    ``taskType: RETRIEVAL_DOCUMENT`` versus ``RETRIEVAL_QUERY``, e5/BGE-style
+    models need ``passage: `` / ``query: `` prefixes. A single ``embed()``
+    makes that asymmetry unrepresentable.
     """
 
     id: str
@@ -44,13 +35,11 @@ class Embedder(Protocol):
 
 
 def tokenize(text: str) -> list[str]:
-    """Lowercase, Unicode-aware tokenization.
+    """Lowercase, Unicode-aware tokenization. SPEC.md appendix A.
 
-    ``str.lower()`` is locale-independent in Python and applies the same
-    SpecialCasing rules as the JVM's ``lowercase(Locale.ROOT)`` — including
-    Greek final sigma and the dotted capital I — so the two implementations
-    agree. Conformance covers Cyrillic, accented Latin and CJK to keep that
-    honest.
+    ``str.lower()`` is locale-independent and applies the same SpecialCasing
+    rules as the JVM's ``lowercase(Locale.ROOT)``, so the two implementations
+    agree.
     """
     tokens: list[str] = _TOKEN_RE.findall(text.lower())
     return tokens
@@ -59,21 +48,16 @@ def tokenize(text: str) -> list[str]:
 def normalize_row(vector: np.ndarray) -> np.ndarray:
     """L2-normalize one row exactly as SPEC.md §3.1 specifies.
 
-    Sequential float64 accumulation, ascending index. ``np.cumsum`` is used
-    rather than ``np.sum`` or ``np.dot`` because cumsum is specified as a
-    sequential prefix scan, while the other two are free to use pairwise or
-    blocked summation. That difference is one ulp in float64, which is enough
-    to change the final float32 rounding and break byte-identity with the
-    Kotlin writer.
+    ``np.cumsum`` rather than ``np.sum`` or ``np.dot``: cumsum is a specified
+    sequential prefix scan, the others may use pairwise or blocked summation.
+    One ulp of difference in float64 changes the final float32 rounding.
     """
     v64 = np.asarray(vector, dtype=np.float64)
     squares = v64 * v64
     ss = float(np.cumsum(squares)[-1]) if squares.size else 0.0
     norm = np.sqrt(ss)
     if norm == 0.0:
-        # A zero row has no direction, and 0/0 would put a NaN in the matrix
-        # that silently poisons every later dot product. e_0 is arbitrary but
-        # defined: a valid unit vector that simply ranks poorly.
+        # 0/0 would put a NaN in the matrix that poisons every later dot product.
         out = np.zeros(v64.shape[0], dtype=np.float32)
         if out.size:
             out[0] = np.float32(1.0)
@@ -83,7 +67,7 @@ def normalize_row(vector: np.ndarray) -> np.ndarray:
 
 
 def normalize_rows(matrix: np.ndarray) -> np.ndarray:
-    """Row-wise :func:`normalize_row` over a 2-D array, in row-batches.
+    """Row-wise :func:`normalize_row` over a 2-D array.
 
     Batched because the cumsum needs a float64 scratch copy, and a full-matrix
     copy at 1M x 768 is 6 GB.
@@ -111,19 +95,12 @@ def normalize_rows(matrix: np.ndarray) -> np.ndarray:
 class HashingEmbedder:
     """Deterministic, seeded, no network. SPEC.md appendix A.
 
-    Required, not optional: it is what makes the entire behavioural suite and
-    the cross-implementation conformance job runnable with no API key and no
-    network. A test suite that needs a credential is a test suite that stops
-    being run.
+    A signed hashing trick, not a good embedding — it exists to be identical
+    in both languages bit for bit, which real models are not, and to make the
+    test suite runnable with no API key.
 
-    The signed hashing trick — one +/-1 per token into a hashed column — is
-    not a good embedding. It is not meant to be. It is meant to be *identical*
-    in both languages, bit for bit, which real models are not.
-
-    Documents and queries share the embedding function here, so that search
-    over a hashed index still returns sensible neighbours. The interface's
-    document/query split is exercised by :class:`GeminiEmbedder`, where the
-    asymmetry is real.
+    Documents and queries share the embedding function here so that search over
+    a hashed index still returns sensible neighbours.
     """
 
     def __init__(self, dimension: int = 256, seed: int = 0) -> None:
@@ -136,7 +113,7 @@ class HashingEmbedder:
         self.produces_normalized = True
 
     def embed_text(self, text: str) -> np.ndarray:
-        """Synchronous single-text embedding. No I/O, so no reason to await it."""
+        """Synchronous single-text embedding. No I/O, so nothing to await."""
         acc = np.zeros(self.dimension, dtype=np.float64)
         seed_bytes = self.seed.to_bytes(8, "little", signed=False)
         for token in tokenize(text):
@@ -144,8 +121,7 @@ class HashingEmbedder:
             column = int.from_bytes(digest[0:4], "little", signed=False) % self.dimension
             sign = 1.0 if (digest[4] & 1) == 0 else -1.0
             acc[column] += sign
-        # Counts are small integers, exact in both float64 and float32, so this
-        # cast cannot introduce a cross-language difference.
+        # Counts are small integers, exact in both float64 and float32.
         return normalize_row(acc.astype(np.float32))
 
     async def embed_documents(self, texts: list[str]) -> np.ndarray:

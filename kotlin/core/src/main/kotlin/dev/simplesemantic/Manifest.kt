@@ -25,8 +25,7 @@ public fun utcNow(): String = RFC3339.format(Instant.now())
  * SPEC.md §4.1: `sha256(text || 0x00 || embedder_id || 0x00 || chunker_id)`.
  *
  * The NUL separators are unambiguous because none of the three inputs may
- * contain a NUL byte. Without them ("ab", "c") and ("a", "bc") would hash
- * alike.
+ * contain a NUL byte.
  */
 public fun contentHash(text: String, embedderId: String, chunkerId: String): String {
     val digest = MessageDigest.getInstance("SHA-256")
@@ -62,7 +61,7 @@ public data class Manifest(
     val normalized: Boolean = true,
     val hashAlgorithm: String = "sha256",
 ) {
-    /** Key order is fixed by SPEC.md §2, and this function is where it is fixed. */
+    /** Key order is fixed by SPEC.md §2, and fixed here. */
     public fun encode(): String = CanonicalJson.encodeObject(
         linkedMapOf(
             "format_version" to formatVersion,
@@ -80,56 +79,35 @@ public data class Manifest(
 
     public companion object {
         public fun decode(raw: String, path: String): Manifest {
-            val obj = try {
-                CanonicalJson.parseObject(raw)
-            } catch (exc: JsonException) {
+            val wire = try {
+                WireJson.decodeFromString(ManifestWire.serializer(), raw)
+            } catch (exc: kotlinx.serialization.SerializationException) {
                 throw CorruptIndexException("$path: manifest is not valid JSON (${exc.message})")
             }
-
-            val version = obj["format_version"]
-            if (version != FORMAT_VERSION.toLong()) {
-                throw FormatVersionException(path, version, FORMAT_VERSION)
+            if (wire.formatVersion != FORMAT_VERSION) {
+                throw FormatVersionException(path, wire.formatVersion, FORMAT_VERSION)
             }
-
-            val required = listOf(
-                "embedder_id", "dimension", "chunker_id",
-                "row_count", "live_count", "created_at", "updated_at",
-            )
-            val missing = required.filterNot { obj.containsKey(it) }
-            if (missing.isNotEmpty()) {
-                throw CorruptIndexException("$path: manifest is missing keys $missing")
-            }
-
             return Manifest(
-                embedderId = obj.string("embedder_id", path),
-                dimension = obj.int("dimension", path),
-                chunkerId = obj.string("chunker_id", path),
-                rowCount = obj.int("row_count", path),
-                liveCount = obj.int("live_count", path),
-                createdAt = obj.string("created_at", path),
-                updatedAt = obj.string("updated_at", path),
-                formatVersion = FORMAT_VERSION,
-                normalized = obj["normalized"] as? Boolean ?: true,
-                hashAlgorithm = obj["hash_algorithm"] as? String ?: "sha256",
+                embedderId = wire.embedderId,
+                dimension = wire.dimension,
+                chunkerId = wire.chunkerId,
+                rowCount = wire.rowCount,
+                liveCount = wire.liveCount,
+                createdAt = wire.createdAt,
+                updatedAt = wire.updatedAt,
+                formatVersion = wire.formatVersion,
+                normalized = wire.normalized,
+                hashAlgorithm = wire.hashAlgorithm,
             )
         }
-
-        private fun Map<String, Any?>.string(key: String, path: String): String =
-            this[key] as? String
-                ?: throw CorruptIndexException("$path: manifest key '$key' is not a string")
-
-        private fun Map<String, Any?>.int(key: String, path: String): Int =
-            (this[key] as? Long)?.toInt()
-                ?: throw CorruptIndexException("$path: manifest key '$key' is not an integer")
     }
 }
 
 /**
  * A bit per row, LSB-first within each byte. SPEC.md §6.
  *
- * LSB-first is repeated here because MSB-first is an equally common convention
- * that produces a file of the same size, parses without error, and disagrees
- * about which rows are deleted.
+ * MSB-first produces a file of the same size that parses without error and
+ * disagrees about which rows are deleted.
  */
 public class Tombstones private constructor(
     private var bits: ByteArray,
@@ -183,7 +161,6 @@ public class Tombstones private constructor(
     /** Boolean array, true where the row is live. */
     public fun liveMask(): BooleanArray = BooleanArray(rows) { !isDeleted(it) }
 
-    // Padding bits past rowCount are already zero and stay that way: markDeleted
-    // range-checks, and growTo appends zero bytes.
+    // Padding bits stay zero: markDeleted range-checks, growTo appends zeros.
     public fun toByteArray(): ByteArray = bits.copyOf()
 }

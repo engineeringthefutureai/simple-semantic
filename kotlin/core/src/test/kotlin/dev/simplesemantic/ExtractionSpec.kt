@@ -6,13 +6,7 @@ import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 
-/**
- * Document extraction. Both entry points are public — see Extraction.kt.
- *
- * This is the README example verbatim, which is the point: `simple-fts`
- * shipped an extractor that crashed on exactly the nullable field its own
- * README declared, because the example was never a test.
- */
+/** Document extraction. Both entry points are public — see Extraction.kt. */
 data class Note(
     @SemanticId val id: String,
     @SemanticIndexed(order = 0) val title: String,
@@ -38,8 +32,7 @@ class ExtractionSpec : StringSpec({
     }
 
     "order pins the concatenation" {
-        // getDeclaredFields() is not specified to return declaration order, so
-        // the annotation carries it explicitly.
+        // getDeclaredFields() is not specified to return declaration order.
         documentsFrom(listOf(Note("n1", "A", "B"))) [0].text shouldBe "A\n\nB"
     }
 

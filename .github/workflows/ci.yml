@@ -5,9 +5,8 @@ on:
     branches: ["main"]
   pull_request:
 
-# The three jobs from CLAUDE.md. `conformance` is the one that matters: the
-# other two can both be green while the two implementations quietly disagree
-# about the format, which is the failure this project is built to prevent.
+# `conformance` is the one that matters: the other two can both be green while
+# the implementations quietly disagree about the format.
 jobs:
   kotlin:
     runs-on: ubuntu-latest
@@ -43,10 +42,8 @@ jobs:
         run: |
           uv venv .venv --python ${{ matrix.python-version }}
           uv pip install -e ".[dev]"
-      # Each gate reports independently. Left to the default, a failing mypy
-      # skips pytest, so one bad config line hides whether the tests pass at
-      # all — which is exactly how this workflow stayed red without anyone
-      # learning that the suite itself was fine.
+      # Each gate reports independently: left to the default, a failing mypy
+      # skips pytest and hides whether the tests pass at all.
       - name: ruff
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: python
@@ -60,9 +57,8 @@ jobs:
         working-directory: python
         run: .venv/bin/python -m pytest -q
       - name: ruff (helper scripts)
-        # conformance/*.py are helpers, not library code, so they are linted but
-        # not type-checked. Without this step they live outside every job's
-        # working-directory and nothing checks them at all.
+        # Helpers, not library code: linted but not type-checked. They live
+        # outside every job's working-directory, so nothing else checks them.
         if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.python-version == '3.13' }}
         run: |
           python/.venv/bin/ruff check conformance/
@@ -79,20 +75,15 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - uses: astral-sh/setup-uv@v5
       - name: story fixture is reproducible from its source
-        # The fixture is committed, and it is generated. If regenerating it from
-        # the YAML produces different bytes, one of the two has drifted.
+        # The fixture is committed and generated; if regenerating it from the
+        # YAML produces different bytes, one of the two has drifted.
         run: |
-          # The script declares its own dependencies inline (PEP 723), so
-          # `uv run --script` installs exactly those. Nothing here needs to
-          # know what the helper imports.
           cp conformance/fixtures/story-embeddings-v1.json /tmp/committed.json
           uv run --script conformance/stories/build_fixture.py
           diff -q /tmp/committed.json conformance/fixtures/story-embeddings-v1.json
       - name: cross-implementation conformance
-        # The runner's default locale is C, under which the JVM decodes
-        # command-line arguments as US-ASCII and every non-Latin query in the
-        # corpus silently becomes question marks. run.sh sets this itself; it
-        # is repeated here so the intent survives someone editing the script.
+        # The runner's default locale is C, under which the JVM decodes argv as
+        # US-ASCII and every non-Latin query becomes question marks.
         env:
           LC_ALL: C.UTF-8
           LANG: C.UTF-8

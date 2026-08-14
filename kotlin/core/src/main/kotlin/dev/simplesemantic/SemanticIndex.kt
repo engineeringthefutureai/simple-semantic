@@ -23,30 +23,18 @@ public data class SearchResult(
 )
 
 /**
- * What [SemanticIndex.addAll] actually did.
- *
- * [skipped] counts documents whose content hash already matched a live row, so
- * no embedding call was made. On a re-index of an unchanged corpus this equals
- * the corpus size, which is the entire point of the hash.
+ * What [SemanticIndex.addAll] did. [skipped] counts documents whose content
+ * hash already matched a live row, so no embedding call was made.
  */
 public data class AddResult(val added: Int, val replaced: Int, val skipped: Int)
-
-/**
- * A metadata predicate. Receives the row's `meta`, returns whether to consider
- * the row. Applied *before* the dot products, so a selective filter makes the
- * search cheaper rather than more expensive.
- */
-public typealias MetaFilter = (Map<String, Any?>) -> Boolean
 
 public const val DEFAULT_CHUNKER_ID: String = "none"
 
 /**
  * A directory of four files, plus the in-memory maps needed to serve it.
  *
- * Loaded into memory at open: ids, metadata and content hashes. Not loaded:
- * document text, which is fetched through `offsets.bin` on demand. Holding text
- * in memory would make `offsets.bin` pointless and would put the corpus in RAM
- * twice.
+ * Loaded at open: ids, metadata and content hashes. Not loaded: document text,
+ * fetched through `offsets.bin` on demand.
  */
 public class SemanticIndex private constructor(
     public val path: Path,
@@ -55,7 +43,6 @@ public class SemanticIndex private constructor(
 
     private lateinit var current: Manifest
     private val ids = ArrayList<String>()
-    private val metas = ArrayList<Map<String, Any?>>()
     private val hashes = ArrayList<String>()
     private val byId = HashMap<String, Int>()
     private var offsets: LongArray = longArrayOf(0)
@@ -112,8 +99,7 @@ public class SemanticIndex private constructor(
                 manifestPath.toString(),
             )
 
-            // SPEC.md §2.1. This check is the reason the project exists in the
-            // shape it does. Do not relax it into a warning.
+            // SPEC.md §2.1. Do not relax this into a warning.
             if (manifest.embedderId != embedder.id) {
                 throw EmbedderMismatchException(path.toString(), manifest.embedderId, embedder.id)
             }
@@ -184,7 +170,7 @@ public class SemanticIndex private constructor(
             return out
         }
 
-        /** Write via a sibling temp file and rename, so a reader never sees a partial file. */
+        /** Write via a sibling temp file and rename; a reader never sees a partial file. */
         private fun writeAtomic(target: Path, data: ByteArray) {
             val temp = target.resolveSibling("${target.fileName}.tmp")
             Files.newOutputStream(
@@ -211,9 +197,8 @@ public class SemanticIndex private constructor(
         }
 
         private fun syncDirectory(directory: Path) {
-            // Directory fsync is not portable; on POSIX it is what makes a
-            // rename durable, and elsewhere failing to open the directory as a
-            // channel is not an error worth propagating.
+            // Not portable: on POSIX this is what makes a rename durable,
+            // elsewhere failing to open the directory is not worth propagating.
             runCatching {
                 java.nio.channels.FileChannel.open(directory, StandardOpenOption.READ)
                     .use { it.force(true) }
@@ -224,24 +209,20 @@ public class SemanticIndex private constructor(
     /**
      * Scan docs.jsonl once, building the id/meta/hash arrays and the id map.
      *
-     * Ascending order with "latest live row wins" is what makes append-only
-     * updates resolve correctly: the previous row for an id was tombstoned
-     * before the new one was appended, so it never claims the id back.
+     * Ascending order with "latest live row wins": the previous row for an id
+     * was tombstoned before the new one was appended.
      */
     private fun loadDocs() {
         ids.clear()
-        metas.clear()
         hashes.clear()
         byId.clear()
         val docsPath = path.resolve(FileNames.DOCS)
         Files.newBufferedReader(docsPath, Charsets.UTF_8).use { reader ->
             var line = reader.readLine()
             while (line != null) {
-                val obj = CanonicalJson.parseObject(line)
-                ids.add(obj["id"] as? String ?: throw CorruptIndexException("$docsPath: missing id"))
-                @Suppress("UNCHECKED_CAST")
-                metas.add((obj["meta"] as? Map<String, Any?>) ?: emptyMap())
-                hashes.add(obj["hash"] as? String ?: "")
+                val document = decodeDocumentLine(line, docsPath.toString())
+                ids.add(document.id)
+                hashes.add(document.hash)
                 line = reader.readLine()
             }
         }
@@ -283,12 +264,7 @@ public class SemanticIndex private constructor(
         "updated_at" to current.updatedAt,
     )
 
-    /**
-     * Fetch one document by row, via offsets.bin. SPEC.md §5.
-     *
-     * A seek and a read of known length — no scan, and no parsing of the other
-     * 12,042 lines to return ten results.
-     */
+    /** Fetch one document by row, via offsets.bin. SPEC.md §5. */
     private fun documentAt(row: Int): Document {
         val start = offsets[row]
         val end = offsets[row + 1]
@@ -298,23 +274,21 @@ public class SemanticIndex private constructor(
             file.readFully(buffer)
         }
         val line = String(buffer, Charsets.UTF_8).trimEnd('\n')
-        val obj = CanonicalJson.parseObject(line)
-        @Suppress("UNCHECKED_CAST")
-        return Document(
-            id = obj["id"] as String,
-            text = obj["text"] as String,
-            meta = (obj["meta"] as? Map<String, Any?>) ?: emptyMap(),
-        )
+        val wire = decodeDocumentLine(line, path.resolve(FileNames.DOCS).toString())
+        return Document(id = wire.id, text = wire.text, meta = wire.meta.toMetaMap())
+    }
+
+    private fun decodeDocumentLine(line: String, source: String): DocumentWire = try {
+        WireJson.decodeFromString(DocumentWire.serializer(), line)
+    } catch (exc: kotlinx.serialization.SerializationException) {
+        throw CorruptIndexException("$source: invalid document line (${exc.message})")
     }
 
     // ------------------------------------------------------------------ writes
 
     /**
-     * Add or replace documents. Unchanged content is not re-embedded.
-     *
-     * The skip is keyed on the content hash from SPEC.md §4.1, which folds in
-     * the embedder and chunker ids — so changing either correctly forces a
-     * re-embed even when the text is identical.
+     * Add or replace documents. Unchanged content is not re-embedded, keyed on
+     * the content hash from SPEC.md §4.1.
      */
     public suspend fun addAll(documents: List<Document>): AddResult {
         if (documents.isEmpty()) return AddResult(0, 0, 0)
@@ -348,8 +322,7 @@ public class SemanticIndex private constructor(
 
         if (pending.isEmpty()) return AddResult(0, 0, skipped)
 
-        // Validate every meta before embedding: an embedding call costs money,
-        // and failing after spending it would be rude.
+        // Validate before embedding: an embedding call costs money.
         for ((document, _) in pending) CanonicalJson.validateMeta(document.meta)
 
         val embedded = embedInBatches(pending.map { it.first.text })
@@ -371,9 +344,7 @@ public class SemanticIndex private constructor(
                 replaced++
             }
             val row = firstNewRow + i
-            // Normalized at write time regardless of what the embedder claims.
-            // Idempotent, one pass, and it makes the index immune to a model
-            // that quietly changes its output convention. SPEC.md §3.1.
+            // Normalized at write time whatever the embedder claims. SPEC.md §3.1.
             vectorBytes.write(normalizeRow(embedded[i]).toLittleEndianBytes())
             val line = CanonicalJson.encodeDocument(
                 document.id,
@@ -386,7 +357,6 @@ public class SemanticIndex private constructor(
             nextOffset += lineBytes.size
             newOffsets.add(nextOffset)
             ids.add(document.id)
-            metas.add(document.meta)
             hashes.add(digest)
             byId[document.id] = row
         }
@@ -399,10 +369,8 @@ public class SemanticIndex private constructor(
     public suspend fun upsert(document: Document): AddResult = addAll(listOf(document))
 
     /**
-     * Embed in batches the embedder declares it can take.
-     *
-     * Batching lives here rather than in the caller so that no code path can
-     * accidentally call the embedder once per document in a loop over results.
+     * Embed in batches the embedder declares it can take. Batching lives here so
+     * no code path can call the embedder once per document over results.
      */
     private suspend fun embedInBatches(texts: List<String>): List<FloatArray> {
         val limit = maxOf(1, embedder.maxBatchSize)
@@ -434,11 +402,9 @@ public class SemanticIndex private constructor(
     /**
      * Append to all files, then commit by rewriting the manifest.
      *
-     * Order matters. The manifest is written last because it is the only file
-     * that declares how long the others should be: a crash before it leaves a
-     * vectors.f32 longer than row_count implies, which the length check in
-     * SPEC.md §2.2 catches loudly on the next open rather than serving garbage
-     * rows.
+     * The manifest is written last because it declares how long the others
+     * should be: a crash before it leaves a vectors.f32 longer than row_count
+     * implies, which SPEC.md §2.2's length check catches on the next open.
      */
     private fun append(vectorBytes: ByteArray, docBytes: ByteArray, newOffsets: List<Long>) {
         closeMapping()
@@ -510,9 +476,7 @@ public class SemanticIndex private constructor(
      * Rewrite the index without tombstoned rows. Returns rows dropped.
      *
      * Crash-safe: the new index is built complete in a sibling directory and
-     * synced before anything in place is touched. A compaction that truncated
-     * the original first and then failed would leave a corrupt index that the
-     * length check detects only after the data is gone.
+     * synced before anything in place is touched.
      */
     public fun compact(): Int {
         val dropped = current.rowCount - current.liveCount
@@ -588,28 +552,17 @@ public class SemanticIndex private constructor(
     // ------------------------------------------------------------------ search
 
     /** Embed the query, then run exact k-NN over the live rows. */
-    public suspend fun search(
-        query: String,
-        k: Int = 10,
-        filter: MetaFilter? = null,
-    ): List<SearchResult> {
-        // An empty query has no direction. Returning nothing beats returning
-        // whatever the zero-vector fallback happens to be near.
+    public suspend fun search(query: String, k: Int = 10): List<SearchResult> {
+        // No direction; better than ranking against the e_0 fallback.
         if (query.isBlank()) return emptyList()
-        return searchVector(embedder.embedQuery(query), k, filter)
+        return searchVector(embedder.embedQuery(query), k)
     }
 
     /**
-     * Exact k-NN against a pre-computed query vector.
-     *
-     * Public because a caller with their own embedding — a cached one, or a
-     * centroid of several — should not have to go back through the embedder.
+     * Exact k-NN against a pre-computed query vector. Public so a caller with a
+     * cached embedding or a centroid need not go back through the embedder.
      */
-    public fun searchVector(
-        queryVector: FloatArray,
-        k: Int = 10,
-        filter: MetaFilter? = null,
-    ): List<SearchResult> {
+    public fun searchVector(queryVector: FloatArray, k: Int = 10): List<SearchResult> {
         if (k <= 0 || current.rowCount == 0) return emptyList()
         if (queryVector.size != current.dimension) {
             throw SimpleSemanticException(
@@ -619,27 +572,19 @@ public class SemanticIndex private constructor(
         val store = vectors ?: throw SimpleSemanticException("index is closed")
         val query = normalizeRow(queryVector)
 
-        // The filter is a boolean mask applied before the dot products, so a
-        // more selective filter means strictly less work. An ANN index has to
-        // choose between pre-filtering, which strands graph traversal in
-        // disconnected regions, and post-filtering, which fetches top-N and
-        // hopes enough survive.
         val live = tombstones.liveMask()
 
-        // A bounded min-heap: O(n log k), never a full sort of n. The head is
-        // always the worst candidate currently held, so admitting a new row is
-        // one comparison.
+        // A bounded min-heap: O(n log k), never a full sort. The head is the
+        // worst candidate held, so admitting a new row is one comparison.
         val heap = PriorityQueue<Hit>(k, WORST_FIRST)
         for (row in 0 until current.rowCount) {
             if (!live[row]) continue
-            if (filter != null && !filter(metas[row])) continue
             val score = store.dot(row, query)
             if (heap.size < k) {
                 heap.add(Hit(row, score))
             } else {
                 val worst = heap.peek()
-                // Ties break by ascending row index (SPEC.md §8) so that both
-                // implementations return identical orderings for equal scores.
+                // Ties break by ascending row index. SPEC.md §8.
                 if (score > worst.score || (score == worst.score && row < worst.row)) {
                     heap.poll()
                     heap.add(Hit(row, score))

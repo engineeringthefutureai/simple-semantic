@@ -1,9 +1,4 @@
-"""``simple-semantic`` command line: index, search, stats, compact.
-
-Deliberately thin. It exists so that an index can be inspected and driven
-without writing a script, and so the conformance harness has something to
-call.
-"""
+"""``simple-semantic`` command line: index, search, stats, compact."""
 
 from __future__ import annotations
 
@@ -13,13 +8,13 @@ import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
 
 from .chunker import FixedChunker
 from .embedder import Embedder, HashingEmbedder
 from .errors import SimpleSemanticError
 from .index import Document, SemanticIndex
 from .replay import ReplayEmbedder
+from .wire import DocumentWire, decode
 
 
 def _build_embedder(args: argparse.Namespace) -> Embedder:
@@ -28,8 +23,7 @@ def _build_embedder(args: argparse.Namespace) -> Embedder:
     if args.embedder == "replay":
         if not args.fixture:
             raise SimpleSemanticError("--embedder replay needs --fixture PATH")
-        # Dimension and id come from the fixture, not from the flags: the
-        # recording is the authority on what produced it.
+        # Dimension and id come from the fixture, not the flags.
         return ReplayEmbedder.from_file(args.fixture)
     if args.embedder == "gemini":
         from .gemini import GeminiEmbedder
@@ -41,9 +35,7 @@ def _build_embedder(args: argparse.Namespace) -> Embedder:
 def _read_documents(source: Path | None) -> list[Document]:
     """Read JSONL documents from a file or stdin.
 
-    Each line is ``{"id": ..., "text": ..., "meta": {...}}``; ``meta`` is
-    optional. This is the same shape as docs.jsonl minus the hash, which the
-    index computes.
+    Each line is ``{"id": ..., "text": ..., "meta": {...}}``; ``meta`` optional.
     """
     # Not a context manager: the handle is either stdin, which must not be
     # closed, or a file this function owns and closes in the finally block.
@@ -55,14 +47,10 @@ def _read_documents(source: Path | None) -> list[Document]:
             if not line:
                 continue
             try:
-                obj: dict[str, Any] = json.loads(line)
+                wire = decode(DocumentWire, json.loads(line), f"line {number}")
             except ValueError as exc:
                 raise SimpleSemanticError(f"line {number}: not valid JSON ({exc})") from exc
-            if "id" not in obj or "text" not in obj:
-                raise SimpleSemanticError(f"line {number}: needs both 'id' and 'text'")
-            documents.append(
-                Document(id=str(obj["id"]), text=str(obj["text"]), meta=dict(obj.get("meta") or {}))
-            )
+            documents.append(Document(id=wire.id, text=wire.text, meta=dict(wire.meta)))
         return documents
     finally:
         if source is not None:
@@ -103,13 +91,7 @@ async def _cmd_index(args: argparse.Namespace) -> int:
 async def _cmd_search(args: argparse.Namespace) -> int:
     embedder = _build_embedder(args)
     with SemanticIndex.open(Path(args.path), embedder) as index:
-        predicate = None
-        if args.filter:
-            wanted = dict(pair.split("=", 1) for pair in args.filter)
-            predicate = lambda meta: all(  # noqa: E731 - a named function adds nothing here
-                str(meta.get(key)) == value for key, value in wanted.items()
-            )
-        results = await index.search(args.query, k=args.k, filter=predicate)
+        results = await index.search(args.query, k=args.k)
 
     if args.json:
         for rank, result in enumerate(results, start=1):
@@ -118,9 +100,7 @@ async def _cmd_search(args: argparse.Namespace) -> int:
                     {
                         "rank": rank,
                         "id": result.id,
-                        # Fixed precision as a string: the shortest round-trip
-                        # decimal form of a double differs between languages,
-                        # so conformance compares text it can rely on.
+                        # Fixed precision as a string; see SPEC.md §7.2.
                         "score": f"{result.score:.12f}",
                         "row": result.row,
                     },
@@ -176,9 +156,6 @@ def _parser() -> argparse.ArgumentParser:
     search_cmd.add_argument("path")
     search_cmd.add_argument("query")
     search_cmd.add_argument("-k", type=int, default=10)
-    search_cmd.add_argument(
-        "--filter", action="append", metavar="KEY=VALUE", help="exact metadata match, repeatable"
-    )
     search_cmd.add_argument("--json", action="store_true")
     search_cmd.set_defaults(run=_cmd_search)
 

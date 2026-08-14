@@ -6,14 +6,12 @@ import java.util.Locale
 /**
  * The one boundary that matters.
  *
- * `embedDocuments` and `embedQuery` are separate methods and must stay
- * separate. Gemini needs `taskType: RETRIEVAL_DOCUMENT` versus
- * `RETRIEVAL_QUERY`; e5/BGE-style models need `passage: ` / `query: ` prefixes.
- * A single `embed()` makes that asymmetry unrepresentable, and getting it wrong
- * costs retrieval quality without raising anything.
+ * `embedDocuments` and `embedQuery` stay separate: Gemini needs
+ * `taskType: RETRIEVAL_DOCUMENT` versus `RETRIEVAL_QUERY`, e5/BGE-style models
+ * need `passage: ` / `query: ` prefixes. A single `embed()` makes that
+ * asymmetry unrepresentable.
  *
- * Batching, retry and rate-limit handling belong to the implementation, not to
- * the index. The index never calls an embedder in a loop over results.
+ * Batching, retry and rate-limit handling belong to the implementation.
  */
 public interface Embedder {
     /** Identity of the model, recorded in the manifest. SPEC.md §2.1. */
@@ -32,16 +30,12 @@ public interface Embedder {
 }
 
 /**
- * Lowercase, Unicode-aware tokenization.
+ * Lowercase, Unicode-aware tokenization. SPEC.md appendix A.
  *
- * `\p{L}\p{N}` rather than `[a-z0-9]`: an ASCII-only class silently returns an
- * empty token list for Cyrillic, CJK and any other non-Latin script, which
- * looks like a bad model rather than a bad regex.
- *
- * `Locale.ROOT` rather than the default locale: under a Turkish locale `I`
- * lowercases to `ı` instead of `i`, so the same corpus would index differently
- * depending on the machine that ran the job — and would stop matching the
- * Python implementation, whose `str.lower()` is locale-independent.
+ * `\p{L}\p{N}` rather than `[a-z0-9]`, which returns an empty token list for
+ * every non-Latin script. `Locale.ROOT` rather than the default: under a
+ * Turkish locale `I` lowercases to `ı`, so the same corpus would index
+ * differently per machine.
  */
 private val TOKEN_PATTERN = Regex("[\\p{L}\\p{N}]+")
 
@@ -51,18 +45,12 @@ public fun tokenize(text: String): List<String> =
 /**
  * Deterministic, seeded, no network. SPEC.md appendix A.
  *
- * Required, not optional: it is what makes the behavioural suite and the
- * cross-implementation conformance job runnable with no API key and no network.
- * A test suite that needs a credential is a test suite that stops being run.
- *
- * The signed hashing trick — one ±1 per token into a hashed column — is not a
- * good embedding, and is not meant to be. It is meant to be *identical* in both
- * languages, bit for bit, which real models are not.
+ * A signed hashing trick, not a good embedding — it exists to be identical in
+ * both languages bit for bit, which real models are not, and to make the test
+ * suite runnable with no API key.
  *
  * Documents and queries share the embedding function here so that search over a
- * hashed index still returns sensible neighbours. The interface's
- * document/query split is exercised by [GeminiEmbedder], where the asymmetry is
- * real.
+ * hashed index still returns sensible neighbours.
  */
 public class HashingEmbedder(
     override val dimension: Int = 256,
@@ -79,7 +67,7 @@ public class HashingEmbedder(
 
     private val seedBytes: ByteArray = ByteArray(8) { i -> ((seed ushr (i * 8)) and 0xFF).toByte() }
 
-    /** Synchronous single-text embedding. No I/O, so no reason to suspend. */
+    /** Synchronous single-text embedding. No I/O, so nothing to suspend for. */
     public fun embedText(text: String): FloatArray {
         val accumulator = DoubleArray(dimension)
         val digest = MessageDigest.getInstance("SHA-256")
@@ -93,8 +81,7 @@ public class HashingEmbedder(
             val sign = if ((hash[4].toInt() and 1) == 0) 1.0 else -1.0
             accumulator[column] += sign
         }
-        // Counts are small integers, exact in both Double and Float, so this
-        // narrowing cannot introduce a cross-language difference.
+        // Counts are small integers, exact in both Double and Float.
         val row = FloatArray(dimension) { accumulator[it].toFloat() }
         return normalizeRow(row)
     }

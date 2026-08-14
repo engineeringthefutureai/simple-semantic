@@ -1,8 +1,7 @@
 """``GeminiEmbedder`` — the one component that makes a network call.
 
-Kept in its own module so that importing :mod:`simple_semantic` does not pull
-in an HTTP client, and so the honest boundary of the project is visible in the
-import graph: everything else here is arithmetic over a local file.
+In its own module so importing :mod:`simple_semantic` does not pull in an HTTP
+client.
 """
 
 from __future__ import annotations
@@ -18,28 +17,18 @@ from .embedder import normalize_row, normalize_rows
 
 _ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:batchEmbedContents"
 
-#: Model quirks worth stating in code rather than in a wiki nobody reads.
+#: Two model quirks that are silent when you get them wrong:
 #:
-#: gemini-embedding-001 pre-normalizes **only** its default 3072-dimension
-#: output. Any smaller ``output_dimensionality`` comes back unnormalized and
-#: must be normalized by hand — which this class does unconditionally, and
-#: which the index then does again at write time.
-#:
-#: gemini-embedding-002 does normalize truncated output, but aggregates
-#: multiple inputs in a single request into one embedding unless each input is
-#: wrapped individually. A batch loop written against 001 will therefore return
-#: one vector where it expected N, silently, against 002. This class always
-#: wraps inputs individually, which is correct for both.
+#: gemini-embedding-001 pre-normalizes only its default 3072-dimension output;
+#: anything smaller comes back unnormalized. gemini-embedding-002 aggregates a
+#: multi-input request into one embedding unless each input is wrapped
+#: individually. This class normalizes unconditionally and always wraps
+#: individually, which is correct for both.
 _PRE_NORMALIZED_DIMENSION = 3072
 
 
 class GeminiEmbedder:
-    """Hosted embeddings from Google's Generative Language API.
-
-    Defaults to 768 dimensions: a quarter of the storage of 3072 for a small
-    retrieval-quality cost, and the benchmark in the README measures that
-    trade rather than assuming it.
-    """
+    """Hosted embeddings from Google's Generative Language API."""
 
     def __init__(
         self,
@@ -62,8 +51,7 @@ class GeminiEmbedder:
         self.dimension = dimension
         self.id = f"{model}@{dimension}"
         self.max_batch_size = max_batch_size
-        # Reported honestly: 001 only pre-normalizes at 3072. The index
-        # normalizes at write time either way, so this flag is informational.
+        # 001 only pre-normalizes at 3072; the index normalizes either way.
         self.produces_normalized = dimension == _PRE_NORMALIZED_DIMENSION
         self._timeout = timeout
         self._max_retries = max_retries
@@ -75,9 +63,7 @@ class GeminiEmbedder:
         return normalize_rows(vectors)
 
     async def embed_query(self, text: str) -> np.ndarray:
-        # Separate from embed_documents because the task type genuinely
-        # differs. Collapsing these into one embed() is a silent quality loss
-        # that no test catches unless you already know to look for it.
+        # Separate from embed_documents: the task type genuinely differs.
         vectors = await self._request([text], task_type="RETRIEVAL_QUERY")
         return normalize_row(vectors[0])
 
@@ -92,9 +78,7 @@ class GeminiEmbedder:
             "requests": [
                 {
                     "model": f"models/{self._model}",
-                    # Each input wrapped individually. See the note above about
-                    # gemini-embedding-002 aggregating multiple parts into one
-                    # embedding.
+                    # Wrapped individually — see the note above.
                     "content": {"parts": [{"text": text}]},
                     "taskType": task_type,
                     "outputDimensionality": self.dimension,
@@ -127,8 +111,7 @@ class GeminiEmbedder:
     ) -> httpx.Response:
         """Retry on 429 and 5xx with exponential backoff.
 
-        Retry belongs to the embedder, not to the index: the index has no idea
-        what a rate limit is and should not grow one.
+        Retry belongs to the embedder; the index has no idea what a rate limit is.
         """
         delay = 1.0
         last: Exception | None = None

@@ -15,13 +15,9 @@ import kotlin.math.abs
 /**
  * Retrieval quality over the story corpus, with real embeddings.
  *
- * Every other spec here uses [HashingEmbedder], which proves the format is
- * correct and proves nothing about whether search retrieves anything. These run
- * a real [SemanticIndex] over ten stories and twenty-five queries whose vectors
- * came from `gemini-embedding-001` — replayed from a fixture, so they need no
- * API key, no network, and produce identical numbers every run.
- *
- * The same fixture drives the Python suite. Both must agree, which is the point.
+ * Ten stories and twenty-five queries whose vectors came from
+ * `gemini-embedding-001`, replayed from a fixture. The same fixture drives the
+ * Python suite; both must agree.
  */
 class StoriesSpec : StringSpec({
 
@@ -32,59 +28,33 @@ class StoriesSpec : StringSpec({
     val fixture = repoRoot.resolve("conformance/fixtures/story-embeddings-v1.json")
     val storiesDir = repoRoot.resolve("conformance/stories")
 
-    /** Story ids in the order metadata.yaml declares them, with their genres. */
-    fun stories(): List<Triple<String, String, String>> {
-        val out = ArrayList<Triple<String, String, String>>()
-        var id = ""
-        var genre = ""
-        for (line in Files.readAllLines(storiesDir.resolve("metadata.yaml"), Charsets.UTF_8)) {
-            when {
-                line.startsWith("id:") -> id = line.substringAfter(":").trim()
-                line.startsWith("genre:") -> genre = line.substringAfter(":").trim().trim('"')
-                line.startsWith("file:") -> {
-                    val file = line.substringAfter(":").trim().trim('"')
-                    out.add(Triple(id, genre, Files.readString(storiesDir.resolve(file))))
-                }
-            }
-        }
-        return out
-    }
+    fun recorded(): FixtureWire =
+        WireJson.decodeFromString(
+            FixtureWire.serializer(),
+            Files.readString(fixture, Charsets.UTF_8),
+        )
+
+    /** Story id to text. The fixture carries ids and filenames beside the vectors. */
+    fun stories(): List<Pair<String, String>> =
+        recorded().documents.map { it.id to Files.readString(storiesDir.resolve(it.file)) }
 
     /** Prompt to target-story id; a blank target marks a negative control. */
-    fun queries(): List<Pair<String, String>> {
-        val out = ArrayList<Pair<String, String>>()
-        var prompt: String? = null
-        for (line in Files.readAllLines(storiesDir.resolve("queries.yaml"), Charsets.UTF_8)) {
-            val trimmed = line.trim()
-            when {
-                trimmed.startsWith("- prompt:") ->
-                    prompt = CanonicalJson.parseObject(
-                        "{\"p\":${trimmed.removePrefix("- prompt:").trim()}}",
-                    )["p"] as String
-                trimmed.startsWith("target_story:") && prompt != null -> {
-                    val target = trimmed.substringAfter(":").trim().trim('"')
-                    out.add(prompt to if (target == "none") "" else target)
-                    prompt = null
-                }
-            }
-        }
-        return out
-    }
+    fun queries(): List<Pair<String, String>> =
+        recorded().queries.map { it.prompt to it.target }
 
     fun index(): SemanticIndex = SemanticIndex.create(
         tempdir().toPath().resolve("stories.index"),
         ReplayEmbedder.fromFile(fixture),
     )
 
-    suspend fun SemanticIndex.fill(): List<Triple<String, String, String>> {
+    suspend fun SemanticIndex.fill(): List<Pair<String, String>> {
         val corpus = stories()
-        addAll(corpus.map { (id, genre, text) -> Document(id, text, mapOf("genre" to genre)) })
+        addAll(corpus.map { (id, text) -> Document(id, text) })
         return corpus
     }
 
     "the fixture records its embedder" {
-        // SPEC.md §2.1 applied to the recording itself. A bag of vectors with no
-        // model identity is exactly what makes a silent model swap possible.
+        // SPEC.md §2.1 applied to the recording itself.
         val embedder = ReplayEmbedder.fromFile(fixture)
         embedder.id shouldBe "gemini-embedding-001@768"
         embedder.dimension shouldBe 768
@@ -92,12 +62,10 @@ class StoriesSpec : StringSpec({
     }
 
     "recorded vectors are not unit norm" {
-        // gemini-embedding-001 pre-normalizes only its default 3072-dimension
-        // output; at 768 the norms land near 0.59, and the embedder says so
-        // rather than claiming a normalization it does not perform.
+        // At 768 dimensions the norms land near 0.59, and the embedder says so.
         val embedder = ReplayEmbedder.fromFile(fixture)
         embedder.producesNormalized shouldBe false
-        val vector = embedder.embedDocuments(listOf(stories().first().third)).single()
+        val vector = embedder.embedDocuments(listOf(stories().first().second)).single()
         var sum = 0.0
         for (value in vector) sum += value.toDouble() * value
         val norm = Math.sqrt(sum)
@@ -105,9 +73,8 @@ class StoriesSpec : StringSpec({
     }
 
     "write-time normalization fixes unnormalized input" {
-        // SPEC.md §3.1 against real unnormalized vectors. Every other
-        // normalization test starts from a vector that was already unit-norm, so
-        // it would still pass with the normalization step deleted. This will not.
+        // SPEC.md §3.1 against real unnormalized input: every other
+        // normalization test starts from a unit-norm vector.
         index().use { index ->
             val corpus = index.fill()
             VectorStore.open(
@@ -135,9 +102,7 @@ class StoriesSpec : StringSpec({
     }
 
     "document and query recordings are separate" {
-        // The same text has two different correct vectors, by task type. Asking
-        // for a document embedding of a query string must miss rather than
-        // quietly serve the query vector.
+        // The same text has two different correct vectors, by task type.
         val embedder = ReplayEmbedder.fromFile(fixture)
         val prompt = queries().first().first
         embedder.embedQuery(prompt).size shouldBe 768
@@ -174,10 +139,8 @@ class StoriesSpec : StringSpec({
     }
 
     "negative controls score below every real match" {
-        // Five queries about tax returns, sourdough, quantum computing and
-        // bicycle brakes have no right answer. Exact search cannot abstain — it
-        // still returns k results — but their best score sits below the *worst*
-        // score of any genuine match.
+        // Exact search cannot abstain, so the five no-answer queries still
+        // return k results — but below the weakest genuine match.
         index().use { index ->
             index.fill()
             val all = queries()
@@ -192,10 +155,8 @@ class StoriesSpec : StringSpec({
     }
 
     "scores cluster in a narrow band" {
-        // Why the API refuses an absolute score threshold. SPEC.md §8. Across
-        // 250 pairs every cosine similarity sits in a band roughly 0.45..0.75 —
-        // real signal, but far from zero and model-dependent, so only ordering
-        // carries information.
+        // Why there is no absolute score threshold. SPEC.md §8. All 250 pairs
+        // sit in a 0.3-wide band far from zero.
         index().use { index ->
             val corpus = index.fill()
             val scores = queries().flatMap { index.search(it.first, k = corpus.size) }.map { it.score }
@@ -206,24 +167,10 @@ class StoriesSpec : StringSpec({
         }
     }
 
-    "the genre filter is exact" {
-        index().use { index ->
-            val corpus = index.fill()
-            val gothic = corpus.filter { it.second.contains("Gothic") }.map { it.first }
-            gothic.isNotEmpty() shouldBe true
-            val results = index.search(queries().first().first, k = 10) {
-                (it["genre"] as? String)?.contains("Gothic") == true
-            }
-            results.map { it.id } shouldBe gothic
-        }
-    }
-
     "re-indexing the corpus embeds nothing" {
         index().use { index ->
             val corpus = index.fill()
-            val second = index.addAll(
-                corpus.map { (id, genre, text) -> Document(id, text, mapOf("genre" to genre)) },
-            )
+            val second = index.addAll(corpus.map { (id, text) -> Document(id, text) })
             second.skipped shouldBe corpus.size
             second.added shouldBe 0
             second.replaced shouldBe 0

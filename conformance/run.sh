@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 #
-# Cross-implementation conformance. The headline test of this project.
-#
-# The format is the primary artifact; two implementations exist to prove it is
-# real. This script is where that claim is checked:
+# Cross-implementation conformance.
 #
 #   1. Kotlin writes an index from the shared corpus with HashingEmbedder.
 #   2. Python writes its own index from the same corpus.
@@ -17,11 +14,10 @@
 
 set -euo pipefail
 
-# The JVM decodes command-line arguments with sun.jnu.encoding, which follows
-# the process locale and is NOT affected by -Dfile.encoding. Under the default
-# POSIX locale that is US-ASCII, so a Cyrillic or Japanese query arrives at
-# main() as a row of question marks and silently searches for nothing. The
-# corpus is deliberately multilingual, so this line is load-bearing.
+# The JVM decodes argv with sun.jnu.encoding, which follows the process locale
+# and is NOT affected by -Dfile.encoding. Under the default POSIX locale that is
+# US-ASCII, so a Cyrillic query searches for nothing. The corpus is
+# multilingual, so this line is load-bearing.
 export LC_ALL="${LC_ALL:-C.UTF-8}"
 export LANG="${LANG:-C.UTF-8}"
 
@@ -87,16 +83,15 @@ compare_files() {
 echo "==> comparing files byte for byte"
 compare_files "$OUT/kotlin-index" "$OUT/python-index" ""
 
-# manifest.json is deliberately excluded: created_at and updated_at are
-# wall-clock timestamps, so it cannot be byte-identical. Everything else in it
-# is compared field by field instead.
+# manifest.json is excluded: created_at and updated_at are wall-clock, so it
+# cannot be byte-identical. Everything else is compared field by field.
 "$PYTHON" "$CONF/compare_manifests.py" \
   "$OUT/kotlin-index/manifest.json" "$OUT/python-index/manifest.json" || status=1
 
 # --------------------------------------------------------------- query sweeps
 
-# Each implementation queries each index. Four runs, so a disagreement points
-# at either the reader or the writer rather than leaving it ambiguous.
+# Each implementation queries each index, so a disagreement points at either
+# the reader or the writer.
 run_queries() {
   local runner="$1" index="$2" output="$3" queries="${4:-$QUERIES}"
   : >"$output"
@@ -127,8 +122,8 @@ compare "$OUT/kt-on-kt.jsonl" "$OUT/py-on-py.jsonl" "both implementations rank i
 
 if [[ -d "$GOLDEN" ]]; then
   echo "==> reading the committed v1 golden index"
-  # The regression guard on the format itself: if a change makes this
-  # unreadable, the format changed and format_version must change with it.
+  # If a change makes this unreadable, the format changed and format_version
+  # must change with it.
   run_queries kt "$GOLDEN" "$OUT/kt-on-golden.jsonl"
   run_queries py "$GOLDEN" "$OUT/py-on-golden.jsonl"
   compare "$OUT/kt-on-golden.jsonl" "$OUT/py-on-golden.jsonl" \
@@ -143,10 +138,9 @@ fi
 # ------------------------------------------------- real-embedding conformance
 
 # Everything above uses HashingEmbedder, whose vectors are small integers before
-# normalization. Recorded gemini-embedding-001 output is a strictly harder case
-# for byte-identity: 768 arbitrary decimals per row, so any disagreement in
-# decimal parsing, float32 narrowing or normalization order shows up here and
-# nowhere else in the suite.
+# normalization. Recorded gemini-embedding-001 output is 768 arbitrary decimals
+# per row, so decimal parsing, float32 narrowing and summation order all have to
+# agree here.
 if [[ -f "$STORY_FIXTURE" ]]; then
   echo "==> repeating the check with real recorded embeddings"
 

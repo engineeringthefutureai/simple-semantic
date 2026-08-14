@@ -1,123 +1,53 @@
 # simple-semantic
 
-Brute-force semantic search. No ANN index, no vector database, no hidden
-machinery. A sibling to
-[`simple-fts`](https://github.com/engineeringthefutureai/simple-fts), which
-does the same thing for inverted-index full-text search.
+Brute-force semantic search. `scores = D @ q`, then top-k. No ANN index, no
+vector database.
 
-Two implementations — Kotlin and Python — over **one shared on-disk format**.
-The format ([SPEC.md](SPEC.md)) is the primary artifact. The implementations
-exist to prove it is real: an index written by either is byte-identical to one
-written by the other, and each reads the other's output. CI checks this on
-every push.
+Two implementations — Kotlin and Python — over one shared on-disk format
+([SPEC.md](SPEC.md)). An index written by either is byte-identical to one
+written by the other, and each reads the other's output. CI checks it.
+
+A sibling to [`simple-fts`](https://github.com/engineeringthefutureai/simple-fts),
+which does the same for inverted-index full-text search.
 
 ```
-==> comparing files byte for byte
 ok    vectors.f32 identical (5120 bytes)
 ok    docs.jsonl identical (5786 bytes)
 ok    offsets.bin identical (168 bytes)
-ok    manifest.json agrees on every non-timestamp field
-==> running the query set four ways
 ok    python reads the kotlin index (12 queries, 110 results)
 ok    kotlin reads the python index (12 queries, 110 results)
-ok    both implementations rank identically (12 queries, 110 results)
-==> repeating the check with real recorded embeddings
 ok    stories vectors.f32 identical (30720 bytes)
-ok    both implementations rank identically on real embeddings (25 queries, 250 results)
+ok    both implementations rank identically on real embeddings
 ```
 
-That last pair matters more than it looks. The first checks use a deterministic
-hashing embedder whose vectors are small integers before normalization; the
-second replays 30 KB of real `gemini-embedding-001` output — 768 arbitrary
-decimals per row — so any disagreement in decimal parsing, float32 narrowing or
-summation order shows up there and nowhere else.
-
 ---
 
-## Thesis
+## The format
 
-Exact k-NN over a dense matrix is `scores = D @ q` followed by a top-k
-selection. That is the whole algorithm. Everything a vector database adds is
-either an approximation of this or a preprocessing step around it.
-
-At the scale most people actually operate — 10k to 1M chunks — brute force is
-not merely "good enough". It is better on three axes:
-
-**1. Filtered search is exact.** A metadata predicate is a boolean mask
-applied before the dot products, so the filter *reduces* work. An ANN index
-must choose between pre-filtering, which breaks graph connectivity and strands
-traversal in dead ends, and post-filtering, which fetches the top 1000 and
-hopes enough survive. Neither degrades gracefully as selectivity rises.
-
-**2. Updates and deletes are trivial.** Tombstone a row, append a row. No
-graph repair, no index rebuild. See [SPEC.md §6](SPEC.md).
-
-**3. Recall is 100% by construction.** ANN trades recall for latency. That is
-a real cost, and it is absent from most marketing. Here it needs no tuning
-parameter and no measurement: every live row is scored, so the returned top-1
-*is* the top-1.
-
-There is also a fourth thing, which is not about performance:
-
-**4. Opening an index with the wrong embedder is an error, not a surprise.**
-The manifest records the model identity, and `open()` refuses a mismatch by
-name. A model swap against an existing index otherwise raises nothing and
-crashes nothing — the vectors still have the right shape, the dot products
-still compute, the top-k still returns k results. They are simply meaningless.
-Most vector databases do not guard this.
-
-### The honest limits
-
-- **The hosted embedding model is the one thing here that is not neanderthal.**
-  It is a network call to someone else's GPU. It is isolated behind
-  [one interface](kotlin/core/src/main/kotlin/dev/simplesemantic/Embedder.kt)
-  so the boundary is visible, and a local ONNX implementation is planned so the
-  gap can be measured rather than asserted.
-- **The Python search path delegates to BLAS.** `D @ q` through NumPy is the
-  least neanderthal line in the project. The Kotlin side is a hand-written
-  `FloatArray` dot loop, which is the point *there*.
-- **The performance claims above are structural, not yet benchmarked.** The
-  filtered-search curve against an ANN baseline, the fp32/fp16/int8 dtype
-  curve, and Kotlin-loop-versus-BLAS are all still to be measured. Nothing in
-  this README states a number that is not printed by something in this repo.
-
----
-
-## The format in one screen
-
-An index is a **directory**, not a file. Everything in it is inspectable with
-standard tools — that is a design requirement, not a nicety.
+An index is a directory. Every file is inspectable with standard tools.
 
 ```
 index/
-  manifest.json      # embedder id, dimension, row counts. The header.
-  vectors.f32        # row-major little-endian float32. No header at all.
+  manifest.json      # embedder id, dimension, row counts
+  vectors.f32        # row-major little-endian float32, no header
   docs.jsonl         # one JSON object per line; line N describes row N
   offsets.bin        # uint64 LE line offsets, for O(1) document fetch
-  tombstones.bits    # one bit per row, LSB-first. Absent means no deletions.
+  tombstones.bits    # one bit per row, LSB-first; absent means no deletions
 ```
 
 ```console
 $ jq -c . index/manifest.json
 {"format_version":1,"embedder_id":"hashing-0@64","dimension":64,...}
 
-$ head -c 200 index/docs.jsonl
-{"id":"ann/hnsw","text":"Hierarchical navigable small world graphs...
-
-$ od -A d -t x1 -j 32 -N 16 index/vectors.f32
-0000032 42 5b 78 3e 00 00 00 00 42 5b 78 3e 00 00 00 00
-
-$ od -A d -t f4 -j 32 -N 16 index/vectors.f32     # 0x3e785b42 little-endian
+$ od -A d -t f4 -j 32 -N 16 index/vectors.f32
 0000032      0.24253562               0      0.24253562               0
 ```
 
-The one invariant everything else serves: **line N of `docs.jsonl` describes
-row N of `vectors.f32`.** [SPEC.md](SPEC.md) is normative and explains every
-choice that looks arbitrary — why there is no binary header, why the tombstone
-bit order is stated explicitly, why floats are banned from metadata, and why
-the normalization arithmetic is specified down to the summation order.
+The invariant everything serves: **line N of `docs.jsonl` describes row N of
+`vectors.f32`.** [SPEC.md](SPEC.md) is normative.
 
----
+`open()` refuses an index whose `embedder_id` differs from the configured
+embedder, naming both. Updates are append-only: tombstone a row, append a row.
 
 ## Usage
 
@@ -128,8 +58,7 @@ import asyncio
 from simple_semantic import Document, HashingEmbedder, SemanticIndex
 
 async def main():
-    embedder = HashingEmbedder(dimension=256)
-    index = SemanticIndex.create("./notes.index", embedder)
+    index = SemanticIndex.create("./notes.index", HashingEmbedder(dimension=256))
 
     await index.add_all([
         Document(id="n1", text="Cosine similarity over a dense matrix.",
@@ -141,20 +70,12 @@ async def main():
     for hit in await index.search("vector similarity", k=5):
         print(f"{hit.score:+.4f}  {hit.id}")
 
-    # Exact metadata filtering, applied before the dot products.
-    await index.search("vector similarity", k=5,
-                       filter=lambda meta: meta.get("source") == "notes")
-
-    await index.upsert(Document(id="n1", text="Revised text."))  # tombstone + append
+    await index.upsert(Document(id="n1", text="Revised text."))
     index.delete("n2")
-    index.compact()                                              # crash-safe rewrite
+    index.compact()
 
 asyncio.run(main())
 ```
-
-Both snippets above are executed verbatim by the test suites
-(`tests/test_readme.py`, `ReadmeSpec.kt`), so they cannot drift from the
-real API.
 
 Extraction from your own types, both entry points public:
 
@@ -171,7 +92,6 @@ class Note:
     tags: Annotated[list[str], SemanticMeta]
 
 docs = from_dataclass(notes)
-# or, with no annotations and no requirement to be a dataclass:
 docs = from_lambdas(rows, id_of=lambda r: r["key"], text_of=lambda r: r["body"])
 ```
 
@@ -182,11 +102,8 @@ import dev.simplesemantic.*
 import java.nio.file.Path
 import kotlinx.coroutines.runBlocking
 
-// addAll, upsert and search are suspend: the embedder behind them may be a
-// network call, and hiding that behind a synchronous signature would be a lie.
 runBlocking {
-    val embedder = HashingEmbedder(dimension = 256)
-    SemanticIndex.create(Path.of("./notes.index"), embedder).use { index ->
+    SemanticIndex.create(Path.of("./notes.index"), HashingEmbedder(dimension = 256)).use { index ->
         index.addAll(listOf(
             Document("n1", "Cosine similarity over a dense matrix.",
                      mapOf("source" to "notes", "tags" to listOf("ir"))),
@@ -197,11 +114,9 @@ runBlocking {
             println("%+.4f  %s".format(hit.score, hit.id))
         }
 
-        index.search("vector similarity", k = 5) { it["source"] == "notes" }
-
-        index.upsert(Document("n1", "Revised text."))   // tombstone + append
+        index.upsert(Document("n1", "Revised text."))
         index.delete("n2")
-        index.compact()                                 // crash-safe rewrite
+        index.compact()
     }
 }
 ```
@@ -215,19 +130,19 @@ data class Note(
 )
 
 val documents = documentsFrom(notes)
-// or, with plain lambdas — public, not internal:
 val documents = documentsFrom(rows, idOf = { it.key }, textOf = { it.body })
 ```
 
-### Command line
+Both snippets are executed by the test suites (`tests/test_readme.py`,
+`ReadmeSpec.kt`), so they cannot drift.
 
-Both implementations ship the same four commands.
+### Command line
 
 ```console
 $ simple-semantic index ./notes.index -i corpus.jsonl
 added 20, replaced 0, skipped 0 (unchanged) -> 20 live rows
 
-$ simple-semantic index ./notes.index -i corpus.jsonl      # re-index, nothing changed
+$ simple-semantic index ./notes.index -i corpus.jsonl      # nothing changed
 added 0, replaced 0, skipped 20 (unchanged) -> 20 live rows
 
 $ simple-semantic search ./notes.index "approximate nearest neighbour" -k 3
@@ -239,136 +154,78 @@ $ simple-semantic search ./notes.index "approximate nearest neighbour" -k 3
      Normalising every row at write time makes cosine similarity a plain dot product...
 
 $ simple-semantic stats ./notes.index
-path: ./notes.index
-embedder_id: hashing-0@64
-dimension: 64
-row_count: 20
-live_count: 20
-deleted_count: 0
-vectors_bytes: 5120
-
 $ simple-semantic compact ./notes.index
-dropped 0 tombstoned rows (20 -> 20)
 ```
 
-The second `index` run is the feature that decides whether this is usable
-daily: a chunk whose content hash is unchanged is not re-embedded, so
-re-indexing after editing one file costs one embedding call rather than
-twenty thousand.
-
----
+A chunk whose content hash is unchanged is not re-embedded, so the second
+`index` run makes no embedding calls.
 
 ## Embedders
 
-| | network | deterministic | use |
-|---|---|---|---|
-| `HashingEmbedder` | no | yes, bit-for-bit across languages | format tests, conformance |
-| `ReplayEmbedder` | no | yes, it is a recording | retrieval-quality tests |
-| `GeminiEmbedder` | yes | no | real retrieval |
-| `LocalEmbedder` | no | — | not yet built |
+| | network | deterministic |
+|---|---|---|
+| `HashingEmbedder` | no | yes, bit-for-bit across languages |
+| `ReplayEmbedder` | no | yes, it is a recording |
+| `GeminiEmbedder` | yes | no |
 
-`HashingEmbedder` is required, not optional: it is what makes the entire test
-suite and the conformance job runnable with no API key. A test suite that
-needs a credential is a test suite that stops being run.
+`HashingEmbedder` makes the whole test suite runnable with no API key.
 
-`ReplayEmbedder` covers what the hashing embedder cannot. Hashed vectors prove
-the *format* is correct and say nothing about whether search retrieves; hosted
-vectors retrieve properly but need a key, a network and money. So real
-`gemini-embedding-001` output was recorded once into
-[`conformance/fixtures/story-embeddings-v1.json`](conformance/fixtures/story-embeddings-v1.json),
-keyed by `sha256(text)`, and replayed offline. That makes genuine
-retrieval-quality assertions runnable in CI with identical numbers every run:
+`ReplayEmbedder` serves vectors a real model produced once, recorded to
+[a fixture](conformance/fixtures/story-embeddings-v1.json) keyed by
+`sha256(text)`:
 
 ```python
 embedder = ReplayEmbedder.from_file("conformance/fixtures/story-embeddings-v1.json")
-index = SemanticIndex.create("./stories.index", embedder)   # embedder_id: gemini-embedding-001@768
+index = SemanticIndex.create("./stories.index", embedder)   # gemini-embedding-001@768
 ```
 
-A miss is a loud error, never a zero vector — a mock that quietly invents a
-plausible answer is the exact failure this project refuses. Documents and
-queries live in separate maps, so asking for a document embedding of a recorded
-*query* fails instead of silently serving the wrong task type.
+A miss is an error, never a zero vector. Documents and queries are separate
+maps, so asking for a document embedding of a recorded query fails rather than
+serving the wrong task type.
 
-Document and query embedding are **separate methods and stay separate**.
-Gemini needs `RETRIEVAL_DOCUMENT` versus `RETRIEVAL_QUERY`; e5/BGE-style models
-need `passage: ` / `query: ` prefixes. A single `embed()` makes that asymmetry
-unrepresentable and losing it costs retrieval quality without raising anything.
+Document and query embedding are separate methods and stay separate: Gemini
+needs `RETRIEVAL_DOCUMENT` versus `RETRIEVAL_QUERY`, e5/BGE-style models need
+`passage: ` / `query: ` prefixes.
 
-Two Gemini quirks are documented in the code because they are silent when you
-get them wrong: `gemini-embedding-001` only pre-normalizes its default
-3072-dimension output, and `gemini-embedding-002` collapses a multi-input
-request into a single embedding unless each input is wrapped individually.
+## Retrieval quality
 
----
-
-## Retrieval quality, measured
-
-Ten AI-generated stories across genres, twenty queries written to describe a
-story without naming it, and five negative controls about corporate tax
-returns, sourdough, quantum computing and bicycle brakes. Embedded once with
-`gemini-embedding-001` at 768 dimensions and replayed from a fixture, so these
-numbers are reproduced exactly by `pytest` and `gradlew test`:
+Ten stories, twenty queries that describe one without naming it, five negative
+controls. Reproduced exactly by `pytest` and `gradlew test`:
 
 ```
-top-1 accuracy on targeted queries: 18/20      (the target is in the top 3 for 20/20)
+top-1 accuracy on targeted queries: 18/20      (target in top 3 for 20/20)
 targeted top score:  min 0.5538  mean 0.6679  max 0.7466
 negative top score:  min 0.5141  mean 0.5342  max 0.5507
 whole-matrix range:  0.4508 .. 0.7466          (250 query-document pairs)
 ```
 
-Two things worth reading off that table.
+Exact search cannot abstain — the negative controls still return k results.
+Their best score sits below the weakest genuine match, and the suite asserts
+that separation.
 
-**Exact search cannot abstain.** The five negative controls have no right
-answer, and brute force still returns k results for each — it always will. What
-saves the caller is that their best score, 0.5507, sits below the *weakest*
-genuine match at 0.5538. The suite asserts that separation directly.
-
-**This is why there is no threshold API.** Every one of those 250 cosine
-similarities falls between 0.45 and 0.75. The signal is real, but it is a
-0.3-wide band sitting nowhere near zero, and where the band sits moves with the
-model and the corpus. A `score > 0.7` rule would be tuned to this fixture and
-meaningless anywhere else.
-
-## No score thresholds
-
-The API does not expose an absolute similarity threshold and will not grow one,
-for the reason the numbers above make concrete. Only relative ordering carries
-signal.
-
----
+All 250 similarities fall in a 0.3-wide band far from zero, and where the band
+sits moves with the model and the corpus. That is why the API exposes no
+absolute score threshold: only relative ordering carries signal.
 
 ## Building
 
-Requires **JDK 22 or newer** (the Foreign Function & Memory API is final there;
-see [SPEC.md §3](SPEC.md)) and **Python 3.11+**.
+Requires **JDK 22 or newer** (the Foreign Function & Memory API is final there)
+and **Python 3.11+**.
 
 ```console
-$ cd kotlin && ./gradlew build          # 74 tests
+$ cd kotlin && ./gradlew build               # 73 tests
 $ cd python && uv venv .venv && uv pip install -e ".[dev]"
 $ cd python && .venv/bin/python -m pytest    # 78 tests
-$ ./conformance/run.sh                  # the one that matters
+$ ./conformance/run.sh
 ```
 
-`conformance/run.sh` builds an index with each implementation from the shared
-corpus, compares the files byte for byte, runs the query set four ways (each
-implementation against each index), checks that both still read the committed
-v1 golden index in `conformance/fixtures/`, and then repeats the byte-identity
-check over the story corpus with real recorded embeddings. Those fixtures, not
-the code, are the regression guard on the format.
+`conformance/run.sh` builds an index with each implementation, compares the
+files byte for byte, runs the query set four ways, checks both still read the
+committed v1 golden index, and repeats the byte-identity check over the story
+corpus with real recorded embeddings.
 
----
-
-## Not in this repository, on purpose
-
-ANN indexing of any kind. A dependency on Chroma, FAISS, Qdrant, Milvus,
-pgvector or LanceDB. A vendored BLAS on the Kotlin side. Sharding, or any
-network protocol between the two implementations. LLM generation, agents, or a
-RAG chain — this is retrieval only.
-
-Deliberately deferred: reciprocal rank fusion with `simple-fts`
-(`score = Σ 1/(60 + rank)`, roughly ten lines, needs no score calibration
-because it consumes ranks only). Not until both indexes are independently
-correct.
+To drive the story corpus by hand, see
+[conformance/stories/README.md](conformance/stories/README.md).
 
 ## License
 
