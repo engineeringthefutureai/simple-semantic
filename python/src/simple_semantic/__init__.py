@@ -20,7 +20,7 @@ from .errors import (
 )
 from .extract import SemanticId, SemanticIndexed, SemanticMeta, from_dataclass, from_lambdas
 from .format import FORMAT_VERSION, Manifest, content_hash
-from .index import AddResult, Document, Filter, SearchResult, SemanticIndex
+from .index import AddResult, Document, SearchResult, SemanticIndex
 from .replay import ReplayEmbedder, ReplayMissError
 
 __all__ = [
@@ -32,7 +32,6 @@ __all__ = [
     "Embedder",
     "EmbedderMismatchError",
     "ExtractionError",
-    "Filter",
     "FixedChunker",
     "FormatVersionError",
     "HashingEmbedder",

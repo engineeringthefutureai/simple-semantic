@@ -1,15 +1,8 @@
 """Retrieval quality over the story corpus, with real embeddings.
 
-Every other test in this suite uses ``HashingEmbedder``, which proves the format
-is correct and proves nothing about whether search retrieves anything. These
-tests run a real ``SemanticIndex`` over ten stories and twenty-five queries whose
-vectors came from ``gemini-embedding-001`` — replayed from a fixture, so they
-need no API key, no network, and produce identical numbers on every run.
-
-The thresholds below are chosen with slack against the measured values, and each
-one names what it is really asserting. They are regression guards, not targets:
-a change that improves retrieval should not fail them, and a change that silently
-breaks scoring should.
+Ten stories and twenty-five queries whose vectors came from
+``gemini-embedding-001``, replayed from a fixture. The thresholds are regression
+guards with slack against the measured values, not targets.
 """
 
 from __future__ import annotations
@@ -58,39 +51,21 @@ def story_index(tmp_path: Path, embedder: ReplayEmbedder, corpus):
 
 
 async def _fill(index: SemanticIndex, stories: list[Story]) -> None:
-    await index.add_all(
-        [
-            Document(
-                id=story.id,
-                text=story.text,
-                meta={"genre": story.genre, "title": story.title, "words": story.word_count},
-            )
-            for story in stories
-        ]
-    )
+    await index.add_all([Document(id=story.id, text=story.text) for story in stories])
 
 
 # ------------------------------------------------------------------ the fixture
 
 
 def test_fixture_records_its_embedder(embedder: ReplayEmbedder) -> None:
-    """SPEC.md §2.1 applied to the recording itself.
-
-    A bag of vectors with no model identity is exactly what makes a silent model
-    swap possible, so the fixture carries one and the index inherits it.
-    """
+    """SPEC.md §2.1 applied to the recording itself."""
     assert embedder.id == "gemini-embedding-001@768"
     assert embedder.dimension == 768
     assert len(embedder) == 35  # 10 documents + 25 queries
 
 
 def test_recorded_vectors_are_not_unit_norm(embedder: ReplayEmbedder) -> None:
-    """The reason this fixture is worth having.
-
-    ``gemini-embedding-001`` pre-normalizes only its default 3072-dimension
-    output; at 768 the norms land near 0.59. The embedder reports that honestly
-    rather than claiming a normalization it does not perform.
-    """
+    """At 768 dimensions ``gemini-embedding-001`` norms land near 0.59."""
     assert embedder.produces_normalized is False
 
     recorded = json.loads(FIXTURE.read_text(encoding="utf-8"))
@@ -103,11 +78,10 @@ def test_recorded_vectors_are_not_unit_norm(embedder: ReplayEmbedder) -> None:
 
 
 async def test_write_time_normalization_fixes_unnormalized_input(story_index, corpus) -> None:
-    """SPEC.md §3.1, exercised against real unnormalized vectors.
+    """SPEC.md §3.1 against real unnormalized input.
 
-    Every other normalization test starts from a vector that was already
-    unit-norm, so it could pass with the normalization step deleted. This one
-    cannot.
+    Every other normalization test starts from a unit-norm vector, so it would
+    still pass with the normalization step deleted. This will not.
     """
     index, stories = story_index
     await _fill(index, stories)
@@ -127,12 +101,7 @@ async def test_a_missing_recording_is_loud(story_index) -> None:
 
 
 async def test_document_and_query_recordings_are_separate(embedder: ReplayEmbedder, corpus) -> None:
-    """The same text has two different correct vectors, by task type.
-
-    Asking for a document embedding of a query string must miss rather than
-    quietly serve the query vector — that substitution is a silent retrieval
-    quality loss, and it is the reason the interface has two methods.
-    """
+    """The same text has two different correct vectors, by task type."""
     _, queries = corpus
     prompt = queries[0].prompt
     assert (await embedder.embed_query(prompt)).shape == (768,)
@@ -177,13 +146,9 @@ async def test_the_target_is_always_in_the_top_three(story_index, corpus) -> Non
 
 
 async def test_negative_controls_score_below_every_real_match(story_index, corpus) -> None:
-    """The result worth having from this corpus.
-
-    Five queries about tax returns, sourdough, quantum computing and bicycle
-    brakes have no right answer. Brute force still returns k results for them —
-    exact search cannot abstain — but their best score sits below the *worst*
-    score of any genuine match. Measured: negatives peak at 0.5507, targeted
-    queries bottom out at 0.5538.
+    """Exact search cannot abstain, so the five no-answer queries still return
+    k results — but their best score sits below the weakest genuine match.
+    Measured: negatives peak at 0.5507, targeted bottom out at 0.5538.
     """
     index, stories = story_index
     _, queries = corpus
@@ -204,13 +169,10 @@ async def test_negative_controls_score_below_every_real_match(story_index, corpu
 
 
 async def test_scores_cluster_in_a_narrow_band(story_index, corpus) -> None:
-    """Why the API refuses to expose an absolute score threshold. SPEC.md §8.
+    """Why there is no absolute score threshold. SPEC.md §8.
 
-    Across 250 query-document pairs every cosine similarity falls between about
-    0.45 and 0.75. The signal is real but it is a 0.3-wide band sitting far from
-    zero, and where the band sits moves with the model and the corpus. A
-    ``score > 0.7`` rule would be tuned to this fixture and meaningless anywhere
-    else — only the ordering carries information.
+    All 250 pairs fall in a 0.3-wide band far from zero, and where the band sits
+    moves with the model and the corpus.
     """
     index, stories = story_index
     _, queries = corpus
@@ -230,28 +192,12 @@ async def test_scores_cluster_in_a_narrow_band(story_index, corpus) -> None:
 # ------------------------------------------------------------------ index behaviour
 
 
-async def test_genre_filter_is_exact(story_index, corpus) -> None:
-    index, stories = story_index
-    _, queries = corpus
-    await _fill(index, stories)
-
-    gothic = [story for story in stories if "Gothic" in story.genre]
-    assert gothic, "the corpus lost its Gothic Horror entry"
-
-    results = await index.search(
-        queries[0].prompt, k=10, filter=lambda meta: "Gothic" in str(meta.get("genre", ""))
-    )
-    assert [result.id for result in results] == [story.id for story in gothic]
-
-
 async def test_reindexing_the_corpus_embeds_nothing(story_index, corpus) -> None:
-    """The incremental hash, measured on a corpus where re-embedding costs money."""
+    """The incremental hash, on a corpus where re-embedding costs money."""
     index, stories = story_index
     await _fill(index, stories)
 
-    second = await index.add_all(
-        [Document(id=story.id, text=story.text, meta={"genre": story.genre}) for story in stories]
-    )
+    second = await index.add_all([Document(id=story.id, text=story.text) for story in stories])
     assert second.skipped == len(stories)
     assert second.added == 0 and second.replaced == 0
     assert index.size() == len(stories)
@@ -274,11 +220,8 @@ async def test_deleting_the_top_hit_promotes_the_runner_up(story_index, corpus) 
 async def test_opening_the_story_index_with_the_hashing_embedder_is_refused(
     story_index, corpus
 ) -> None:
-    """The guard, on an index where the mistake would be expensive.
-
-    A 768-dimension Gemini index and a 64-dimension hashing index are not
-    interchangeable, and the error says so by name rather than returning
-    nonsense rankings.
+    """A 768-dimension Gemini index and a 64-dimension hashing index are not
+    interchangeable, and the error says so by name.
     """
     index, stories = story_index
     await _fill(index, stories)

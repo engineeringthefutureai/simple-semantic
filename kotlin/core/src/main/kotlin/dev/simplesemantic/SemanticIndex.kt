@@ -28,12 +28,6 @@ public data class SearchResult(
  */
 public data class AddResult(val added: Int, val replaced: Int, val skipped: Int)
 
-/**
- * A metadata predicate over the row's `meta`. Applied before the dot products,
- * so a selective filter means less work.
- */
-public typealias MetaFilter = (Map<String, Any?>) -> Boolean
-
 public const val DEFAULT_CHUNKER_ID: String = "none"
 
 /**
@@ -49,7 +43,6 @@ public class SemanticIndex private constructor(
 
     private lateinit var current: Manifest
     private val ids = ArrayList<String>()
-    private val metas = ArrayList<Map<String, Any?>>()
     private val hashes = ArrayList<String>()
     private val byId = HashMap<String, Int>()
     private var offsets: LongArray = longArrayOf(0)
@@ -221,7 +214,6 @@ public class SemanticIndex private constructor(
      */
     private fun loadDocs() {
         ids.clear()
-        metas.clear()
         hashes.clear()
         byId.clear()
         val docsPath = path.resolve(FileNames.DOCS)
@@ -230,8 +222,6 @@ public class SemanticIndex private constructor(
             while (line != null) {
                 val obj = CanonicalJson.parseObject(line)
                 ids.add(obj["id"] as? String ?: throw CorruptIndexException("$docsPath: missing id"))
-                @Suppress("UNCHECKED_CAST")
-                metas.add((obj["meta"] as? Map<String, Any?>) ?: emptyMap())
                 hashes.add(obj["hash"] as? String ?: "")
                 line = reader.readLine()
             }
@@ -366,7 +356,6 @@ public class SemanticIndex private constructor(
             nextOffset += lineBytes.size
             newOffsets.add(nextOffset)
             ids.add(document.id)
-            metas.add(document.meta)
             hashes.add(digest)
             byId[document.id] = row
         }
@@ -562,25 +551,17 @@ public class SemanticIndex private constructor(
     // ------------------------------------------------------------------ search
 
     /** Embed the query, then run exact k-NN over the live rows. */
-    public suspend fun search(
-        query: String,
-        k: Int = 10,
-        filter: MetaFilter? = null,
-    ): List<SearchResult> {
+    public suspend fun search(query: String, k: Int = 10): List<SearchResult> {
         // No direction; better than ranking against the e_0 fallback.
         if (query.isBlank()) return emptyList()
-        return searchVector(embedder.embedQuery(query), k, filter)
+        return searchVector(embedder.embedQuery(query), k)
     }
 
     /**
      * Exact k-NN against a pre-computed query vector. Public so a caller with a
      * cached embedding or a centroid need not go back through the embedder.
      */
-    public fun searchVector(
-        queryVector: FloatArray,
-        k: Int = 10,
-        filter: MetaFilter? = null,
-    ): List<SearchResult> {
+    public fun searchVector(queryVector: FloatArray, k: Int = 10): List<SearchResult> {
         if (k <= 0 || current.rowCount == 0) return emptyList()
         if (queryVector.size != current.dimension) {
             throw SimpleSemanticException(
@@ -590,7 +571,6 @@ public class SemanticIndex private constructor(
         val store = vectors ?: throw SimpleSemanticException("index is closed")
         val query = normalizeRow(queryVector)
 
-        // Applied before the dot products, so a selective filter means less work.
         val live = tombstones.liveMask()
 
         // A bounded min-heap: O(n log k), never a full sort. The head is the
@@ -598,7 +578,6 @@ public class SemanticIndex private constructor(
         val heap = PriorityQueue<Hit>(k, WORST_FIRST)
         for (row in 0 until current.rowCount) {
             if (!live[row]) continue
-            if (filter != null && !filter(metas[row])) continue
             val score = store.dot(row, query)
             if (heap.size < k) {
                 heap.add(Hit(row, score))

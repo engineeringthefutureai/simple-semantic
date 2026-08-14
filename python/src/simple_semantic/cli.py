@@ -95,13 +95,7 @@ async def _cmd_index(args: argparse.Namespace) -> int:
 async def _cmd_search(args: argparse.Namespace) -> int:
     embedder = _build_embedder(args)
     with SemanticIndex.open(Path(args.path), embedder) as index:
-        predicate = None
-        if args.filter:
-            wanted = dict(pair.split("=", 1) for pair in args.filter)
-            predicate = lambda meta: all(  # noqa: E731 - a named function adds nothing here
-                str(meta.get(key)) == value for key, value in wanted.items()
-            )
-        results = await index.search(args.query, k=args.k, filter=predicate)
+        results = await index.search(args.query, k=args.k)
 
     if args.json:
         for rank, result in enumerate(results, start=1):
@@ -166,9 +160,6 @@ def _parser() -> argparse.ArgumentParser:
     search_cmd.add_argument("path")
     search_cmd.add_argument("query")
     search_cmd.add_argument("-k", type=int, default=10)
-    search_cmd.add_argument(
-        "--filter", action="append", metavar="KEY=VALUE", help="exact metadata match, repeatable"
-    )
     search_cmd.add_argument("--json", action="store_true")
     search_cmd.set_defaults(run=_cmd_search)
 

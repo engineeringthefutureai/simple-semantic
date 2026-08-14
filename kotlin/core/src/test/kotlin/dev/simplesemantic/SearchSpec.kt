@@ -39,41 +39,17 @@ class SearchSpec : StringSpec({
         }
     }
 
-    "the filter is exact and applied before scoring" {
+    "metadata round-trips into results" {
+        // Stored and returned; the index does not filter on it.
         freshIndex().use { index ->
-            index.addAll(
-                listOf(
-                    Document("a1", "shared subject matter", mapOf("source" to "a")),
-                    Document("a2", "shared subject matter", mapOf("source" to "a")),
-                    Document("b1", "shared subject matter", mapOf("source" to "b")),
-                ),
-            )
-            val results = index.search("shared subject matter", k = 10) { it["source"] == "b" }
-            results.map { it.id } shouldContainExactly listOf("b1")
-        }
-    }
-
-    "a filter matching nothing returns nothing" {
-        freshIndex().use { index ->
-            index.addAll(listOf(Document("a", "hello", mapOf("source" to "a"))))
-            index.search("hello", k = 5) { it["source"] == "zzz" } shouldBe emptyList()
-        }
-    }
-
-    "a filter admitting everything changes nothing but the work done" {
-        freshIndex().use { index ->
-            index.addAll((0 until 20).map { Document("d$it", "row $it", mapOf("n" to it.toLong())) })
-            val unfiltered = index.search("row", k = 20).map { it.id to it.score }
-            val filtered = index.search("row", k = 20) { true }.map { it.id to it.score }
-            filtered shouldBe unfiltered
+            index.addAll(listOf(Document("a", "shared subject matter", mapOf("source" to "a"))))
+            index.search("shared subject matter", k = 1).single().meta shouldBe
+                mapOf("source" to "a")
         }
     }
 
     "recall is total by construction" {
-        // Every live row is scored, so the true nearest neighbour is always
-        // found. This is the property an ANN index trades away — and here it
-        // needs no tuning parameter and no recall measurement, because the
-        // brute-force top-1 is the definitional top-1.
+        // Every live row is scored, so the top-1 is the definitional top-1.
         freshIndex().use { index ->
             index.addAll((0 until 50).map { Document("d$it", "unique phrasing number $it zulu") })
             for (target in listOf(0, 17, 49)) {
@@ -148,10 +124,9 @@ class SearchSpec : StringSpec({
     }
 
     "the tokenizer lowercases locale-independently" {
-        // Locale.ROOT, not the default locale: a Turkish locale maps I to ı and
-        // the same corpus would index differently depending on the machine.
-        // İ (U+0130) lowercases to i plus a combining dot, and the combining
-        // mark is category Mn — outside \p{L}\p{N} — so it ends the token.
+        // Locale.ROOT, not the default: a Turkish locale maps I to ı. İ
+        // lowercases to i plus a combining dot, category Mn, which ends the
+        // token. SPEC.md appendix A.
         tokenize("STRASSE Iİ") shouldContainExactly listOf("strasse", "ii")
         tokenize("ΟΔΟΣ") shouldContainExactly listOf("οδος")
     }
@@ -171,8 +146,7 @@ class SearchSpec : StringSpec({
     }
 
     "chunk boundaries are code points" {
-        // UTF-16 code units would split a surrogate pair and make the JVM
-        // disagree with Python on the same input.
+        // UTF-16 code units would split a surrogate pair.
         val pieces = FixedChunker(size = 4, overlap = 0).chunk("🚀".repeat(10))
         pieces.map { it.text } shouldContainExactly listOf("🚀🚀🚀🚀", "🚀🚀🚀🚀", "🚀🚀")
     }
@@ -184,10 +158,8 @@ class SearchSpec : StringSpec({
     }
 
     "ties at the k boundary keep the lowest rows" {
-        // Selection must not drop a tied row in favour of an equal-scoring
-        // later one. Conformance caught a case where one implementation kept
-        // an arbitrary subset of the rows tied on the k-th score, so the two
-        // returned different *sets* rather than merely a different order.
+        // Selection must not drop a tied row for an equal-scoring later one:
+        // a bare partition keeps an arbitrary subset of the tied rows.
         freshIndex().use { index ->
             index.addAll((0 until 8).map { Document("tie$it", "identical scoring text") })
             index.addAll(

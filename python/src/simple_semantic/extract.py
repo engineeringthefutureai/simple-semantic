@@ -31,7 +31,7 @@ class _SemanticIndexed:
 
 
 class _SemanticMeta:
-    """Marks a field stored as filterable metadata but not embedded."""
+    """Marks a field stored as metadata but not embedded."""
 
     def __repr__(self) -> str:
         return "SemanticMeta"

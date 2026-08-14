@@ -13,11 +13,8 @@ import java.nio.file.Files
 import kotlin.math.abs
 
 /**
- * The on-disk format. SPEC.md §2-§7.
- *
- * Each test builds its own index. Sharing mutable index state across cases —
- * which the `simple-fts` specs did — makes every failure ambiguous: a broken
- * delete shows up as a failure in an unrelated search case three tests later.
+ * The on-disk format. SPEC.md §2-§7. Each test builds its own index; shared
+ * mutable state makes failures ambiguous.
  */
 class FormatSpec : StringSpec({
 
@@ -95,10 +92,8 @@ class FormatSpec : StringSpec({
     }
 
     "vectors are written little-endian" {
-        // SPEC.md §3. The JVM defaults to big-endian, so this must be pinned.
-        // Asserted at the byte level rather than by round-trip, because a
-        // round-trip through one implementation passes with either convention
-        // — it is only the *other* implementation that notices.
+        // SPEC.md §3. Asserted at the byte level: a round-trip through one
+        // implementation passes with either convention.
         val bytes = floatArrayOf(1.0f, -2.0f, 0.5f).toLittleEndianBytes()
         // 1.0f is 0x3F800000; little-endian on disk is 00 00 80 3F.
         bytes.copyOfRange(0, 4).toList() shouldContainExactly
@@ -143,8 +138,7 @@ class FormatSpec : StringSpec({
     }
 
     "meta rejects floating-point values" {
-        // SPEC.md §7.2 — not because floats are hard, but because their
-        // decimal form is not portable across languages.
+        // SPEC.md §7.2: their decimal form is not portable across languages.
         val error = shouldThrow<MetaValueException> {
             CanonicalJson.encodeDocument("id", "text", mapOf("score" to 0.5), "h")
         }
@@ -168,7 +162,7 @@ class FormatSpec : StringSpec({
     }
 
     "open refuses a different embedder" {
-        // SPEC.md §2.1: the single most important correctness rule here.
+        // SPEC.md §2.1.
         val directory = tempdir().toPath().resolve("index")
         SemanticIndex.create(directory, HashingEmbedder(dimension = 64)).use { index ->
             index.addAll(listOf(Document("a", "hello")))

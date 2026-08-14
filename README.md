@@ -48,7 +48,6 @@ The invariant everything serves: **line N of `docs.jsonl` describes row N of
 
 `open()` refuses an index whose `embedder_id` differs from the configured
 embedder, naming both. Updates are append-only: tombstone a row, append a row.
-Metadata filters are a boolean mask applied before the dot products.
 
 ## Usage
 
@@ -70,9 +69,6 @@ async def main():
 
     for hit in await index.search("vector similarity", k=5):
         print(f"{hit.score:+.4f}  {hit.id}")
-
-    await index.search("vector similarity", k=5,
-                       filter=lambda meta: meta.get("source") == "notes")
 
     await index.upsert(Document(id="n1", text="Revised text."))
     index.delete("n2")
@@ -117,8 +113,6 @@ runBlocking {
         for (hit in index.search("vector similarity", k = 5)) {
             println("%+.4f  %s".format(hit.score, hit.id))
         }
-
-        index.search("vector similarity", k = 5) { it["source"] == "notes" }
 
         index.upsert(Document("n1", "Revised text."))
         index.delete("n2")
@@ -219,9 +213,9 @@ Requires **JDK 22 or newer** (the Foreign Function & Memory API is final there)
 and **Python 3.11+**.
 
 ```console
-$ cd kotlin && ./gradlew build               # 74 tests
+$ cd kotlin && ./gradlew build               # 71 tests
 $ cd python && uv venv .venv && uv pip install -e ".[dev]"
-$ cd python && .venv/bin/python -m pytest    # 78 tests
+$ cd python && .venv/bin/python -m pytest    # 75 tests
 $ ./conformance/run.sh
 ```
 

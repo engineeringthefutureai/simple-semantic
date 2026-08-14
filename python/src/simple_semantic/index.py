@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 import shutil
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -19,10 +19,6 @@ from . import canonical_json
 from . import format as fmt
 from .embedder import Embedder, normalize_row, normalize_rows
 from .errors import CorruptIndexError, EmbedderMismatchError, SimpleSemanticError
-
-#: A metadata predicate over the row's ``meta``. Applied before the dot
-#: products, so a selective filter means less work.
-Filter = Callable[[Mapping[str, Any]], bool]
 
 DEFAULT_CHUNKER_ID = "none"
 
@@ -72,7 +68,6 @@ class SemanticIndex:
         self._embedder = embedder
         self._manifest: fmt.Manifest
         self._ids: list[str] = []
-        self._metas: list[dict[str, Any]] = []
         self._hashes: list[str] = []
         self._by_id: dict[str, int] = {}
         self._offsets: np.ndarray = np.zeros(1, dtype=fmt.OFFSET_DTYPE)
@@ -153,7 +148,6 @@ class SemanticIndex:
         was tombstoned before the new one was appended.
         """
         self._ids = []
-        self._metas = []
         self._hashes = []
         self._by_id = {}
         docs_path = self._path / fmt.DOCS
@@ -166,7 +160,6 @@ class SemanticIndex:
                     )
                 obj = canonical_json.decode_line(raw.rstrip(b"\n"))
                 self._ids.append(str(obj["id"]))
-                self._metas.append(dict(obj.get("meta") or {}))
                 self._hashes.append(str(obj["hash"]))
         if len(self._ids) != self._manifest.row_count:
             raise CorruptIndexError(
@@ -310,7 +303,6 @@ class SemanticIndex:
             next_offset += len(line)
             new_offsets.append(next_offset)
             self._ids.append(doc.id)
-            self._metas.append(dict(doc.meta))
             self._hashes.append(digest)
             self._by_id[doc.id] = row
 
@@ -475,19 +467,14 @@ class SemanticIndex:
 
     # ------------------------------------------------------------------ search
 
-    async def search(
-        self, query: str, k: int = 10, filter: Filter | None = None
-    ) -> list[SearchResult]:
+    async def search(self, query: str, k: int = 10) -> list[SearchResult]:
         """Embed the query, then run exact k-NN over the live rows."""
         if not query.strip():
             # No direction; better than ranking against the e_0 fallback.
             return []
-        vector = await self._embedder.embed_query(query)
-        return self.search_vector(vector, k=k, filter=filter)
+        return self.search_vector(await self._embedder.embed_query(query), k=k)
 
-    def search_vector(
-        self, query_vector: np.ndarray, k: int = 10, filter: Filter | None = None
-    ) -> list[SearchResult]:
+    def search_vector(self, query_vector: np.ndarray, k: int = 10) -> list[SearchResult]:
         """Exact k-NN against a pre-computed query vector.
 
         Public so a caller with a cached embedding or a centroid need not go
@@ -504,14 +491,7 @@ class SemanticIndex:
                 f"query vector has shape {query.shape}, expected ({self._manifest.dimension},)"
             )
 
-        mask = self._tombstones.live_mask()
-        if filter is not None:
-            # Applied before the dot products, so a selective filter means less work.
-            for candidate in np.flatnonzero(mask).tolist():
-                if not filter(self._metas[candidate]):
-                    mask[candidate] = False
-
-        rows = np.flatnonzero(mask)
+        rows = np.flatnonzero(self._tombstones.live_mask())
         if rows.size == 0:
             return []
 

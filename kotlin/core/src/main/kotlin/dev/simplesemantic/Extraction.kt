@@ -24,7 +24,7 @@ public annotation class SemanticId
 @Retention(AnnotationRetention.RUNTIME)
 public annotation class SemanticIndexed(val order: Int = 0)
 
-/** Marks a field stored as filterable metadata but not embedded. */
+/** Marks a field stored as metadata but not embedded. */
 @Target(AnnotationTarget.FIELD)
 @Retention(AnnotationRetention.RUNTIME)
 public annotation class SemanticMeta

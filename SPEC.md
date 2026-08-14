@@ -156,7 +156,7 @@ Keys in exactly this order: `id`, `text`, `meta`, `hash`. All four required;
 |---|---|---|
 | `id` | string | Logical document id. Non-empty. Not unique across rows — see §6. |
 | `text` | string | The chunk text that was embedded. |
-| `meta` | object | Filter/display metadata. Value types restricted, see §7.2. |
+| `meta` | object | Caller metadata, returned with results. Value types restricted, see §7.2. |
 | `hash` | string | Lowercase hex `sha256`, see §4.1. |
 
 ### 4.1 The content hash
@@ -268,13 +268,11 @@ Not a file-format concern, but the ordering guarantees are part of what
 conformance checks.
 
 ```
-mask   = live_rows AND metadata_predicate
-scores = vectors[mask] · query
+scores = vectors[live_rows] · query
 top_k  = bounded_min_heap(scores, k)
 ```
 
 - The query vector is L2-normalized by §3.1, so a score is a cosine similarity.
-- Metadata filtering is a boolean mask applied **before** the dot products.
 - Top-k uses a bounded heap, never a full sort of `N`.
 - **Ties break by ascending row index.**
 - `k` larger than the live count returns all live rows.

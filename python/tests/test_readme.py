@@ -49,12 +49,6 @@ async def test_readme_quickstart(tmp_path: Path) -> None:
     hits = await index.search("vector similarity", k=5)
     assert [f"{hit.score:+.4f}  {hit.id}" for hit in hits]
 
-    # Exact metadata filtering, applied before the dot products.
-    filtered = await index.search(
-        "vector similarity", k=5, filter=lambda meta: meta.get("source") == "notes"
-    )
-    assert [hit.id for hit in filtered] == ["n1"]
-
     await index.upsert(Document(id="n1", text="Revised text."))
     index.delete("n2")
     index.compact()

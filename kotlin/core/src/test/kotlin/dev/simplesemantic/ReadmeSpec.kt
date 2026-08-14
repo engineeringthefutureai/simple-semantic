@@ -6,15 +6,10 @@ import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 
 /**
- * The README examples, executed.
+ * The README examples, executed, so a stale snippet fails the build.
  *
- * `simple-fts` shipped an extractor that crashed on exactly the nullable field
- * its own README declared, because the example was prose and the tests were
- * code. Here the example *is* a test: if the API moves, this fails before
- * anyone reads a stale snippet.
- *
- * Keep these in sync with README.md by hand — the only difference permitted is
- * the index path, which points at a temp directory instead of ./notes.index.
+ * Keep these in sync with README.md by hand; the only difference permitted is
+ * the index path.
  */
 class ReadmeSpec : StringSpec({
 
@@ -34,9 +29,6 @@ class ReadmeSpec : StringSpec({
 
             val hits = index.search("vector similarity", k = 5)
             hits.map { "%+.4f  %s".format(it.score, it.id) }.isNotEmpty() shouldBe true
-
-            index.search("vector similarity", k = 5) { it["source"] == "notes" }
-                .map { it.id } shouldContainExactly listOf("n1")
 
             index.upsert(Document("n1", "Revised text."))
             index.delete("n2")

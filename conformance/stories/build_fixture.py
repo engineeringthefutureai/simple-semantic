@@ -11,9 +11,13 @@ Output: ``conformance/fixtures/story-embeddings-v1.json``
       "fixture_version": 1,
       "embedder_id": "gemini-embedding-001@768",
       "dimension": 768,
-      "documents": [{"key": "<sha256 of the embedded text>", "vector": [...]}],
-      "queries":   [{"key": "<sha256 of the embedded text>", "vector": [...]}]
+      "documents": [{"id": ..., "file": ..., "key": "<sha256>", "vector": [...]}],
+      "queries":   [{"prompt": ..., "target": ..., "key": "<sha256>", "vector": [...]}]
     }
+
+Carries the corpus metadata as well as the vectors, so that build_fixture.py is
+the only thing in the repo that parses the YAML. Everything downstream — both
+test suites and the conformance harness — reads this JSON.
 
 Vectors are stored exactly as the model returned them, unnormalized: at 768
 dimensions ``gemini-embedding-001`` norms come back around 0.59, which is what
@@ -70,6 +74,7 @@ def load_stories(stories_dir: Path) -> tuple[list[dict[str, Any]], set[str]]:
         records.append(
             {
                 "id": entry["id"],
+                "file": entry["file"],
                 "key": content_key(text),
                 "vector": [float(v) for v in entry["embedding"]],
             }
@@ -86,8 +91,12 @@ def load_queries(stories_dir: Path) -> tuple[list[dict[str, Any]], set[str]]:
             if "embedding" not in item or not item["embedding"]:
                 raise SystemExit(f"query {item.get('prompt')!r} has no embedding")
             embedder_ids.add(str(item.get("embedder_id", "")))
+            target = str(item.get("target_story") or "")
             records.append(
                 {
+                    "prompt": item["prompt"],
+                    # Empty target marks a negative control: no correct answer.
+                    "target": "" if target == "none" else target,
                     "key": content_key(item["prompt"]),
                     "vector": [float(v) for v in item["embedding"]],
                 }

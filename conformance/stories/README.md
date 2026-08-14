@@ -33,9 +33,9 @@ suite prove it.
 
 ## Matrix Score Inspection Script
 
-A debug/inspection script [inspect_scores.py](inspect_scores.py) multiplies the query embedding matrix by the story embedding matrix ($Q \times S^T$) and outputs a formatted table of similarity scores.
+[inspect_scores.py](inspect_scores.py) prints the 25x10 similarity matrix.
 
-### Modes:
+Modes:
 - **Raw Cosine Similarity**:
   ```bash
   uv run --script conformance/stories/inspect_scores.py
@@ -78,7 +78,7 @@ itself never reads YAML and never calls the `google-genai` SDK.
 
 ## Hypothetical Search Queries
 
-Hypothetical semantic search queries are stored in [queries.yaml](queries.yaml). They test concept retrieval without relying on literal character names or story keywords:
+[queries.yaml](queries.yaml) tests concept retrieval without literal character names or story keywords:
 - **5 short queries** (up to 3 words)
 - **5 medium queries** (up to 5 words)
 - **10 long queries** (up to 10 words)
@@ -88,7 +88,7 @@ Hypothetical semantic search queries are stored in [queries.yaml](queries.yaml).
 
 ## Metadata
 
-The metadata for all stories (genre, title, number, file path, word count, character count) is consolidated in [metadata.yaml](metadata.yaml) as `---` separated multi-document YAML sections.
+[metadata.yaml](metadata.yaml) holds genre, title, file path and counts as `---` separated YAML documents.
 
 ```yaml
 ---
