@@ -105,15 +105,17 @@ async def _cmd_search(args: argparse.Namespace) -> int:
         results = await index.search(args.query, k=args.k, filter=predicate)
 
     if args.json:
-        for result in results:
+        for rank, result in enumerate(results, start=1):
             print(
                 json.dumps(
                     {
+                        "rank": rank,
                         "id": result.id,
-                        "score": result.score,
+                        # Fixed precision as a string: the shortest round-trip
+                        # decimal form of a double differs between languages,
+                        # so conformance compares text it can rely on.
+                        "score": f"{result.score:.12f}",
                         "row": result.row,
-                        "text": result.text,
-                        "meta": result.meta,
                     },
                     ensure_ascii=False,
                 )

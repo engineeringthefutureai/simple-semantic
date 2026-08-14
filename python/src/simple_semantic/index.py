@@ -552,7 +552,19 @@ class SemanticIndex:
         if limit < rows.size:
             # O(n) selection, not an O(n log n) sort of everything. The Kotlin
             # side uses a bounded min-heap; both are the same complexity claim.
-            candidates = np.argpartition(-scores, limit - 1)[:limit]
+            #
+            # argpartition alone is not enough: when several rows tie on the
+            # k-th score it keeps an arbitrary subset of them, so two
+            # implementations would return different *sets* rather than merely
+            # a different order. SPEC.md §8 breaks ties by ascending row, so
+            # take everything strictly better than the k-th score and fill the
+            # remainder from the tied rows in row order. np.flatnonzero returns
+            # ascending indices and `rows` is ascending, so "first tied" is
+            # "lowest row". Still three O(n) passes, still no full sort.
+            threshold = scores[np.argpartition(-scores, limit - 1)[limit - 1]]
+            better = np.flatnonzero(scores > threshold)
+            tied = np.flatnonzero(scores == threshold)
+            candidates = np.concatenate([better, tied[: limit - better.size]])
         else:
             candidates = np.arange(rows.size)
 

@@ -1,0 +1,63 @@
+name: ci
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+# The three jobs from CLAUDE.md. `conformance` is the one that matters: the
+# other two can both be green while the two implementations quietly disagree
+# about the format, which is the failure this project is built to prevent.
+jobs:
+  kotlin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          # JDK 22+ is the floor: the Foreign Function & Memory API is final
+          # there, so java.lang.foreign needs no --enable-preview. SPEC.md §3.
+          java-version: "22"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: test
+        working-directory: kotlin
+        run: ./gradlew build --console=plain
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: install
+        working-directory: python
+        run: uv venv .venv && uv pip install -e ".[dev]"
+      - name: ruff
+        working-directory: python
+        run: .venv/bin/ruff check . && .venv/bin/ruff format --check .
+      - name: mypy
+        working-directory: python
+        run: .venv/bin/mypy
+      - name: pytest
+        working-directory: python
+        run: .venv/bin/python -m pytest -q
+
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "22"
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: cross-implementation conformance
+        # The runner's default locale is C, under which the JVM decodes
+        # command-line arguments as US-ASCII and every non-Latin query in the
+        # corpus silently becomes question marks. run.sh sets this itself; it
+        # is repeated here so the intent survives someone editing the script.
+        env:
+          LC_ALL: C.UTF-8
+          LANG: C.UTF-8
+        run: ./conformance/run.sh

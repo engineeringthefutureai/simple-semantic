@@ -9,6 +9,7 @@ dependencies {
 
 application {
     mainClass.set("dev.simplesemantic.cli.MainKt")
+    applicationName = "simple-semantic"
 }
 
 tasks.named<JavaExec>("run") {

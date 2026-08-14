@@ -182,4 +182,32 @@ class SearchSpec : StringSpec({
         chunker.chunk("") shouldBe emptyList()
         chunker.chunk("   \n  ") shouldBe emptyList()
     }
+
+    "ties at the k boundary keep the lowest rows" {
+        // Selection must not drop a tied row in favour of an equal-scoring
+        // later one. Conformance caught a case where one implementation kept
+        // an arbitrary subset of the rows tied on the k-th score, so the two
+        // returned different *sets* rather than merely a different order.
+        freshIndex().use { index ->
+            index.addAll((0 until 8).map { Document("tie$it", "identical scoring text") })
+            index.addAll(
+                listOf(Document("best", "identical scoring text plus a distinguishing tail")),
+            )
+
+            val results = index.search("identical scoring text", k = 4)
+            val tied = results.filter { it.id.startsWith("tie") }
+            tied.map { it.row } shouldContainExactly tied.map { it.row }.sorted()
+            tied.map { it.id } shouldContainExactly tied.indices.map { "tie$it" }
+        }
+    }
+
+    "k boundary selection is stable across calls" {
+        freshIndex().use { index ->
+            index.addAll((0 until 12).map { Document("tie$it", "same text everywhere") })
+            val first = index.search("same text everywhere", k = 5).map { it.id }
+            repeat(5) {
+                index.search("same text everywhere", k = 5).map { it.id } shouldBe first
+            }
+        }
+    }
 })

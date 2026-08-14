@@ -375,10 +375,17 @@ top_k  = bounded_min_heap(scores, k)
   must come back in the same order from both implementations, or conformance
   is comparing noise.
 - `k` larger than the live count returns all live rows.
-- Scores are compared as float64 computed from float32 inputs, accumulated
-  sequentially — same reasoning as §3.1. Conformance allows `1e-6` absolute
-  divergence on scores but requires **exact** agreement on the ranked id
-  list.
+- Scores accumulate in float64 from float32 inputs. Unlike §3.1, the
+  reduction order is **not** pinned: an implementation may use BLAS, a
+  vectorized reduction, or a sequential loop. Stored bytes must be identical;
+  scores need only agree to `1e-6`. Conformance enforces exactly that split —
+  `1e-6` on scores, **exact** agreement on the ranked id list.
+- Because the reduction order is free, the tie-break above is what keeps the
+  ranked lists identical. A selection that keeps an arbitrary subset of the
+  rows tied on the k-th score (which a bare `argpartition` or `nth_element`
+  does) returns a different *set*, not merely a different order, and breaks
+  conformance. Take every row strictly better than the k-th score, then fill
+  from the tied rows in ascending row order.
 
 ### No absolute score thresholds
 
@@ -400,3 +407,84 @@ bump, but does require a note here.
 `conformance/fixtures/` holds a golden index generated at v1. Both
 implementations must keep reading it. That fixture, not the code, is the
 regression guard on this document.
+
+
+---
+
+## Appendix A: the hashing embedder
+
+Not part of the format — an index does not care which embedder wrote it — but
+pinned here because conformance depends on both implementations producing
+identical vectors for identical text, and `HashingEmbedder` is the only
+embedder for which that is achievable.
+
+`embedder_id` is `hashing-<seed>@<dimension>`.
+
+```
+tokens = tokenize(text)                   # see below
+acc    = float64[dimension], all zero
+seed8  = seed as 8 unsigned little-endian bytes
+
+for token in tokens:                      # source order, duplicates included
+    h      = sha256( utf8(token) || 0x00 || seed8 )
+    column = uint32_le(h[0:4]) mod dimension
+    sign   = +1.0 if (h[4] AND 1) == 0 else -1.0
+    acc[column] = acc[column] + sign
+
+row = float32[dimension] from acc         # exact: every value is a small integer
+out = normalize(row)                      # §3.1, unchanged
+```
+
+Every value in `acc` is an integer well inside the exactly-representable range
+of both float64 and float32, so the narrowing cannot introduce a difference
+between implementations. The only remaining source of divergence is
+tokenization.
+
+### Tokenization
+
+```
+lowercase(text) with locale-independent full Unicode case mapping
+split into maximal runs of characters in Unicode general categories L* or N*
+```
+
+Three details are load-bearing:
+
+- **`\p{L}\p{N}`, not `[a-z0-9]`.** An ASCII-only class returns an empty
+  token list for Cyrillic, CJK, and every other non-Latin script — which looks
+  like a bad model rather than a bad regex.
+- **Locale-independent casing.** Java requires `Locale.ROOT` explicitly;
+  Python's `str.lower()` is already locale-independent. Under a Turkish locale
+  `I` maps to `ı` rather than `i`, so the same corpus would index differently
+  depending on the machine that ran the job. Both languages implement the same
+  SpecialCasing rules, including Greek final sigma (`ΟΔΟΣ` → `οδος` with
+  U+03C2) and `İ` → `i` + U+0307, which is why they agree.
+- **Combining marks are not token characters.** Category Mn is outside
+  `\p{L}\p{N}`, so a combining mark ends a token in both implementations.
+  `İ` therefore tokenizes as `i` followed by a break, not as one token.
+
+Python's `[^\W_]+` with `re.UNICODE` is equivalent to `[\p{L}\p{N}]+`,
+because Python's `\w` is defined as "alphanumeric per `str.isalnum()`, plus
+underscore" and `str.isalnum()` covers exactly the L* and N* categories.
+
+### Not a good embedding
+
+It is a signed hashing trick with no semantics beyond exact token overlap. It
+exists so that the behavioural suites and the conformance job run with no API
+key and no network — a test suite that needs a credential is a test suite that
+stops being run — and so that the two implementations can be compared bit for
+bit, which no real model permits.
+
+Document and query embedding are the same function here, so that search over a
+hashed index still returns sensible neighbours. The `Embedder` interface's
+document/query split is exercised by the Gemini implementation, where the
+asymmetry is real.
+
+### Command-line encoding
+
+Not a format rule, but the failure it prevents is the same shape as §2.1. The
+JVM decodes `main`'s arguments using `sun.jnu.encoding`, which follows the
+process locale and is **not** affected by `-Dfile.encoding`. Under the default
+POSIX locale that is US-ASCII, so a Cyrillic query reaches the tokenizer as a
+row of question marks, produces an almost-empty vector, and returns a ranking
+that is arbitrary but perfectly well-formed. Run the CLI under a UTF-8 locale;
+the Kotlin CLI warns when it detects otherwise.

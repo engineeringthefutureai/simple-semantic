@@ -166,3 +166,29 @@ def test_chunker_rejects_empty_and_whitespace_text() -> None:
     chunker = FixedChunker(size=16, overlap=4)
     assert chunker.chunk("") == []
     assert chunker.chunk("   \n  ") == []
+
+
+async def test_ties_at_the_k_boundary_keep_the_lowest_rows(index: SemanticIndex) -> None:
+    """Selection must not drop a tied row in favour of an equal-scoring later one.
+
+    ``np.argpartition`` alone keeps an arbitrary subset of the rows tied on the
+    k-th score, so two implementations returned different *sets* rather than
+    merely a different order — which conformance caught and this suite did not.
+    """
+    await index.add_all([Document(id=f"tie{i}", text="identical scoring text") for i in range(8)])
+    await index.add_all(
+        [Document(id="best", text="identical scoring text plus a distinguishing tail")]
+    )
+
+    results = await index.search("identical scoring text", k=4)
+    tied = [r for r in results if r.id.startswith("tie")]
+    # Whichever tied rows survive, they must be the lowest-numbered ones.
+    assert [r.row for r in tied] == sorted(r.row for r in tied)
+    assert [r.id for r in tied] == [f"tie{i}" for i in range(len(tied))]
+
+
+async def test_k_boundary_selection_is_stable_across_calls(index: SemanticIndex) -> None:
+    await index.add_all([Document(id=f"tie{i}", text="same text everywhere") for i in range(12)])
+    first = [r.id for r in await index.search("same text everywhere", k=5)]
+    for _ in range(5):
+        assert [r.id for r in await index.search("same text everywhere", k=5)] == first
