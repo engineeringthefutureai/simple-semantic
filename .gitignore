@@ -1,0 +1,15 @@
+# Python
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Kotlin / Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# conformance scratch
+conformance/out/
