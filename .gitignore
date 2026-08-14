@@ -13,3 +13,9 @@ build/
 
 # conformance scratch
 conformance/out/
+
+# IDE / Editor files
+.idea/
+*.iml
+.vscode/
+.DS_Store
