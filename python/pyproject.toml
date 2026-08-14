@@ -33,7 +33,12 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.mypy]
 strict = true
-python_version = "3.11"
+# Deliberately no python_version pin. Pinning it to the floor version made
+# mypy parse *every* file as that version, including numpy's own stubs —
+# and numpy >= 2.5 writes them with PEP 695 `type` statements, which are
+# 3.12+ syntax. That failed on any interpreter newer than the pin while
+# passing locally on the pin itself. Mypy defaults to the running
+# interpreter, and CI runs it on both ends of the supported range instead.
 files = ["src/simple_semantic"]
 
 [[tool.mypy.overrides]]
