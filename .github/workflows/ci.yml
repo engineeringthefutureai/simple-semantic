@@ -26,21 +26,47 @@ jobs:
 
   python:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both ends of the range pyproject declares with requires-python.
+        # Checking only one end is how a floor-version pin can silently stop
+        # matching the interpreter CI actually installs.
+        python-version: ["3.11", "3.13"]
+    name: python (${{ matrix.python-version }})
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - name: install
+        id: install
         working-directory: python
-        run: uv venv .venv && uv pip install -e ".[dev]"
+        run: |
+          uv venv .venv --python ${{ matrix.python-version }}
+          uv pip install -e ".[dev]"
+      # Each gate reports independently. Left to the default, a failing mypy
+      # skips pytest, so one bad config line hides whether the tests pass at
+      # all — which is exactly how this workflow stayed red without anyone
+      # learning that the suite itself was fine.
       - name: ruff
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: python
         run: .venv/bin/ruff check . && .venv/bin/ruff format --check .
       - name: mypy
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: python
         run: .venv/bin/mypy
       - name: pytest
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: python
         run: .venv/bin/python -m pytest -q
+      - name: ruff (helper scripts)
+        # conformance/*.py are helpers, not library code, so they are linted but
+        # not type-checked. Without this step they live outside every job's
+        # working-directory and nothing checks them at all.
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.python-version == '3.13' }}
+        run: |
+          python/.venv/bin/ruff check conformance/
+          python/.venv/bin/ruff format --check conformance/
 
   conformance:
     runs-on: ubuntu-latest
@@ -52,6 +78,16 @@ jobs:
           java-version: "22"
       - uses: gradle/actions/setup-gradle@v4
       - uses: astral-sh/setup-uv@v5
+      - name: story fixture is reproducible from its source
+        # The fixture is committed, and it is generated. If regenerating it from
+        # the YAML produces different bytes, one of the two has drifted.
+        run: |
+          # The script declares its own dependencies inline (PEP 723), so
+          # `uv run --script` installs exactly those. Nothing here needs to
+          # know what the helper imports.
+          cp conformance/fixtures/story-embeddings-v1.json /tmp/committed.json
+          uv run --script conformance/stories/build_fixture.py
+          diff -q /tmp/committed.json conformance/fixtures/story-embeddings-v1.json
       - name: cross-implementation conformance
         # The runner's default locale is C, under which the JVM decodes
         # command-line arguments as US-ASCII and every non-Latin query in the

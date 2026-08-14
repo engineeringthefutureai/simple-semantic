@@ -10,27 +10,27 @@
    (short, medium, long, and irrelevant negative control prompts).
    Saves updated queries to queries.yaml with single-line embedding vectors.
 
-Requirements:
-    pip install google-genai pyyaml
-
 Usage:
     export GEMINI_API_KEY="your-api-key"
-    python conformance/stories/generate_embeddings.py
+    uv run --script conformance/stories/generate_embeddings.py
 """
+
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["google-genai", "pyyaml"]
+# ///
 
 import json
 import os
 import sys
 from pathlib import Path
-import yaml
 
-try:
-    from google import genai
-    from google.genai import types
-except ImportError:
-    print("Error: 'google-genai' package is not installed.")
-    print("Install it with: pip install google-genai pyyaml")
-    sys.exit(1)
+import yaml
+from google import genai
+from google.genai import types
+
+DEFAULT_MODEL = "gemini-embedding-001"
+DEFAULT_DIMENSION = 768
 
 
 def format_story_yaml(entry: dict) -> str:
@@ -44,6 +44,8 @@ def format_story_yaml(entry: dict) -> str:
         f"word_count: {entry.get('word_count', 0)}",
         f"char_count: {entry.get('char_count', 0)}",
     ]
+    if entry.get("embedder_id"):
+        lines.append(f"embedder_id: {json.dumps(entry['embedder_id'])}")
     if "embedding" in entry and entry["embedding"]:
         vec_str = ", ".join(f"{v:.6g}" for v in entry["embedding"])
         lines.append(f"embedding: [{vec_str}]")
@@ -55,7 +57,8 @@ def format_queries_yaml(data: dict) -> str:
     """Format queries dictionary as YAML with single-line embeddings."""
     lines = [
         "# Hypothetical Semantic Search Queries for Conformance Stories",
-        "# Designed to test semantic concept retrieval without literal story keywords or character names.",
+        "# Designed to test semantic concept retrieval without literal story keywords",
+        "# or character names.",
         "",
     ]
 
@@ -68,6 +71,8 @@ def format_queries_yaml(data: dict) -> str:
             lines.append(f"  - prompt: {json.dumps(item['prompt'])}")
             lines.append(f"    target_story: {json.dumps(item['target_story'])}")
             lines.append(f"    word_count: {item['word_count']}")
+            if item.get("embedder_id"):
+                lines.append(f"    embedder_id: {json.dumps(item['embedder_id'])}")
             if "embedding" in item and item["embedding"]:
                 vec_str = ", ".join(f"{v:.6g}" for v in item["embedding"])
                 lines.append(f"    embedding: [{vec_str}]")
@@ -96,13 +101,23 @@ def generate_and_save_all_embeddings():
         sys.exit(1)
 
     client = genai.Client(api_key=api_key)
-    model_name = os.environ.get("GEMINI_EMBED_MODEL", "text-embedding-004")
+    # gemini-embedding-001 at 768 dimensions is what produced the committed
+    # vectors, and it is what the fixture in conformance/fixtures records as
+    # its embedder_id. Changing either without regenerating the other makes
+    # the index unopenable, which is the point of SPEC.md 2.1.
+    #
+    # Note that 001 pre-normalizes ONLY its default 3072-dimension output;
+    # at 768 the vectors come back with a norm around 0.59. That is expected
+    # and correct — the index L2-normalizes every row at write time.
+    model_name = os.environ.get("GEMINI_EMBED_MODEL", DEFAULT_MODEL)
+    dimension = int(os.environ.get("GEMINI_EMBED_DIM", DEFAULT_DIMENSION))
+    print(f"Model: {model_name} at {dimension} dimensions")
 
     # =========================================================================
     # BATCH 1: Story Documents Embedding (RETRIEVAL_DOCUMENT)
     # =========================================================================
     print("--- STEP 1: Processing Story Documents ---")
-    with open(metadata_path, "r", encoding="utf-8") as f:
+    with open(metadata_path, encoding="utf-8") as f:
         documents = list(yaml.safe_load_all(f))
 
     story_entries = [doc for doc in documents if doc and isinstance(doc, dict)]
@@ -121,19 +136,31 @@ def generate_and_save_all_embeddings():
         story_file_info.append(entry)
 
     if story_texts:
-        print(f"Sending Batch Request 1 ({len(story_texts)} documents, task: RETRIEVAL_DOCUMENT)...")
+        print(
+            f"Sending Batch Request 1 ({len(story_texts)} documents, task: RETRIEVAL_DOCUMENT)..."
+        )
         doc_response = client.models.embed_content(
             model=model_name,
             contents=story_texts,
             config=types.EmbedContentConfig(
                 task_type="RETRIEVAL_DOCUMENT",
-                output_dimensionality=768,
+                output_dimensionality=dimension,
             ),
         )
         doc_embeddings = doc_response.embeddings
         print(f"Received {len(doc_embeddings)} document embeddings.")
+        # zip() would silently truncate. Some models aggregate a multi-input
+        # request into ONE embedding, which shows up here as a length of 1.
+        if len(doc_embeddings) != len(story_texts):
+            print(
+                f"Error: asked for {len(story_texts)} document embeddings but "
+                f"{model_name} returned {len(doc_embeddings)}. If that is 1, the "
+                f"API aggregated the batch into a single vector."
+            )
+            sys.exit(1)
 
-        for entry, emb in zip(story_file_info, doc_embeddings):
+        for entry, emb in zip(story_file_info, doc_embeddings, strict=True):
+            entry["embedder_id"] = f"{model_name}@{dimension}"
             entry["embedding"] = [float(v) for v in emb.values]
 
         print(f"Saving updated story metadata to {metadata_path}...")
@@ -147,7 +174,7 @@ def generate_and_save_all_embeddings():
     # BATCH 2: Search Queries Embedding (RETRIEVAL_QUERY)
     # =========================================================================
     print("\n--- STEP 2: Processing Search Queries ---")
-    with open(queries_path, "r", encoding="utf-8") as f:
+    with open(queries_path, encoding="utf-8") as f:
         queries_data = yaml.safe_load(f)
 
     query_items = []
@@ -168,13 +195,20 @@ def generate_and_save_all_embeddings():
             contents=query_prompts,
             config=types.EmbedContentConfig(
                 task_type="RETRIEVAL_QUERY",
-                output_dimensionality=768,
+                output_dimensionality=dimension,
             ),
         )
         query_embeddings = query_response.embeddings
         print(f"Received {len(query_embeddings)} query embeddings.")
+        if len(query_embeddings) != len(query_prompts):
+            print(
+                f"Error: asked for {len(query_prompts)} query embeddings but "
+                f"{model_name} returned {len(query_embeddings)}."
+            )
+            sys.exit(1)
 
-        for item, emb in zip(query_items, query_embeddings):
+        for item, emb in zip(query_items, query_embeddings, strict=True):
+            item["embedder_id"] = f"{model_name}@{dimension}"
             item["embedding"] = [float(v) for v in emb.values]
 
         print(f"Saving updated queries to {queries_path}...")

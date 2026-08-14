@@ -11,6 +11,7 @@ import asyncio
 import os
 from typing import Any
 
+import httpx
 import numpy as np
 
 from .embedder import normalize_row, normalize_rows
@@ -81,8 +82,6 @@ class GeminiEmbedder:
         return normalize_row(vectors[0])
 
     async def _request(self, texts: list[str], *, task_type: str) -> np.ndarray:
-        import httpx
-
         if len(texts) > self.max_batch_size:
             raise ValueError(
                 f"batch of {len(texts)} exceeds max_batch_size {self.max_batch_size}; "
@@ -123,14 +122,14 @@ class GeminiEmbedder:
             )
         return matrix
 
-    async def _send_with_retry(self, client: Any, url: str, payload: dict[str, Any]) -> Any:
+    async def _send_with_retry(
+        self, client: httpx.AsyncClient, url: str, payload: dict[str, Any]
+    ) -> httpx.Response:
         """Retry on 429 and 5xx with exponential backoff.
 
         Retry belongs to the embedder, not to the index: the index has no idea
         what a rate limit is and should not grow one.
         """
-        import httpx
-
         delay = 1.0
         last: Exception | None = None
         for attempt in range(self._max_retries):

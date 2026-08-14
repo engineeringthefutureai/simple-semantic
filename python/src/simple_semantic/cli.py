@@ -19,11 +19,18 @@ from .chunker import FixedChunker
 from .embedder import Embedder, HashingEmbedder
 from .errors import SimpleSemanticError
 from .index import Document, SemanticIndex
+from .replay import ReplayEmbedder
 
 
 def _build_embedder(args: argparse.Namespace) -> Embedder:
     if args.embedder == "hashing":
         return HashingEmbedder(dimension=args.dimension, seed=args.seed)
+    if args.embedder == "replay":
+        if not args.fixture:
+            raise SimpleSemanticError("--embedder replay needs --fixture PATH")
+        # Dimension and id come from the fixture, not from the flags: the
+        # recording is the authority on what produced it.
+        return ReplayEmbedder.from_file(args.fixture)
     if args.embedder == "gemini":
         from .gemini import GeminiEmbedder
 
@@ -149,7 +156,8 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="simple-semantic", description="brute-force semantic search"
     )
-    parser.add_argument("--embedder", default="hashing", choices=["hashing", "gemini"])
+    parser.add_argument("--embedder", default="hashing", choices=["hashing", "replay", "gemini"])
+    parser.add_argument("--fixture", type=Path, help="recorded embeddings, for --embedder replay")
     parser.add_argument("--dimension", type=int, default=256)
     parser.add_argument("--seed", type=int, default=0, help="hashing embedder seed")
     parser.add_argument("--model", default="gemini-embedding-001")

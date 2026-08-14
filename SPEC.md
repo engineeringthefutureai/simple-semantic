@@ -488,3 +488,53 @@ POSIX locale that is US-ASCII, so a Cyrillic query reaches the tokenizer as a
 row of question marks, produces an almost-empty vector, and returns a ranking
 that is arbitrary but perfectly well-formed. Run the CLI under a UTF-8 locale;
 the Kotlin CLI warns when it detects otherwise.
+
+
+---
+
+## Appendix B: the replay fixture
+
+Also not part of the format, and pinned here for the same reason as appendix A:
+conformance depends on it, so it needs a written contract.
+
+`conformance/fixtures/story-embeddings-v1.json` records the output of a real
+model once, so that retrieval-quality tests can run offline with identical
+numbers on every machine.
+
+```json
+{
+  "fixture_version": 1,
+  "embedder_id": "gemini-embedding-001@768",
+  "dimension": 768,
+  "normalized": false,
+  "documents": [{"id": "story-01", "key": "<sha256>", "vector": [...]}],
+  "queries":   [{"key": "<sha256>", "vector": [...]}]
+}
+```
+
+- **`embedder_id` is required and is checked against `dimension`.** A recording
+  with no model identity is precisely the condition §2.1 exists to prevent, one
+  level further out: an index built from an anonymous fixture inherits an
+  embedder id that means nothing.
+- **`key` is `sha256(utf8(text))` of the exact text that was embedded**, not a
+  document id. A replay embedder receives text, not ids, and keying on text
+  means an edited document stops matching its stale vector rather than silently
+  keeping it.
+- **Documents and queries are separate maps.** They were embedded with different
+  task types, so the same string has two different correct vectors. One flat map
+  would serve whichever was recorded last, silently.
+- **Vectors are stored unnormalized, as returned.** `gemini-embedding-001`
+  pre-normalizes only its default 3072-dimension output; at 768 the norms land
+  near 0.59. Normalizing them here would hide that, and would mean §3.1
+  write-time normalization is never exercised against real unnormalized input.
+
+A lookup miss MUST be an error naming the mode, the text and the fixture. It
+MUST NOT return a zero vector, a nearest neighbour, or anything else plausible:
+an embedder that invents an answer converts "this text is not in the recording"
+into "retrieval quality quietly regressed", which is the failure mode this
+entire document is organized against.
+
+Because the vectors are arbitrary decimals rather than the small integers the
+hashing embedder produces, replaying them through both implementations is a
+strictly stronger byte-identity check than §3.1 gets anywhere else — decimal
+parsing, `float32` narrowing and summation order all have to agree.

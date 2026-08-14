@@ -14,14 +14,20 @@ Features:
 - Full prompt and story legends printed to stderr.
 
 Usage:
-    python conformance/stories/inspect_scores.py
-    python conformance/stories/inspect_scores.py --minmax
-    python conformance/stories/inspect_scores.py --zscore
+    uv run --script conformance/stories/inspect_scores.py
+    uv run --script conformance/stories/inspect_scores.py --minmax
+    uv run --script conformance/stories/inspect_scores.py --zscore
 """
+
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["numpy", "pyyaml"]
+# ///
 
 import argparse
 import sys
 from pathlib import Path
+
 import numpy as np
 import yaml
 
@@ -31,12 +37,19 @@ def main():
     parser.add_argument(
         "--minmax",
         action="store_true",
-        help="Apply min-max normalization across the matrix [0.00 to 1.00] to highlight relative contrast.",
+        help=(
+            "Min-max normalize the matrix to [0.00, 1.00] for contrast. Read it as "
+            "contrast only: this forces the best cell to exactly 1.00 and the worst "
+            "to 0.00, which makes an uncalibrated band look like a calibrated score."
+        ),
     )
     parser.add_argument(
         "--zscore",
         action="store_true",
-        help="Apply z-score standardization (mean=0, std=1) to measure standard deviations from baseline noise.",
+        help=(
+            "Z-score standardize (mean=0, std=1) to measure standard deviations "
+            "from the corpus baseline. The honest view of the two."
+        ),
     )
     args = parser.parse_args()
 
@@ -49,7 +62,7 @@ def main():
         sys.exit(1)
 
     # 1. Load Story Metadata & Embeddings
-    with open(metadata_path, "r", encoding="utf-8") as f:
+    with open(metadata_path, encoding="utf-8") as f:
         story_docs = list(yaml.safe_load_all(f))
     story_entries = [d for d in story_docs if d and isinstance(d, dict)]
 
@@ -70,7 +83,7 @@ def main():
         story_vecs.append(entry["embedding"])
 
     # Mapping story_id -> S01..S10 notation
-    id_to_code = {sid: f"S{i+1:02d}" for i, sid in enumerate(story_ids)}
+    id_to_code = {sid: f"S{i + 1:02d}" for i, sid in enumerate(story_ids)}
 
     # Story Matrix S: (10, D)
     S = np.array(story_vecs, dtype=np.float32)
@@ -79,7 +92,7 @@ def main():
     S_norm = S / norms_S
 
     # 2. Load Query Metadata & Embeddings
-    with open(queries_path, "r", encoding="utf-8") as f:
+    with open(queries_path, encoding="utf-8") as f:
         queries_data = yaml.safe_load(f)
 
     query_prompts = []
@@ -126,7 +139,7 @@ def main():
         display_scores = raw_scores
 
     # 5. Output Formatted Table
-    short_headers = [f"{f'S{i+1:02d}':>8}" for i in range(len(story_ids))]
+    short_headers = [f"{f'S{i + 1:02d}':>8}" for i in range(len(story_ids))]
 
     print(f"\n==================== SIMILARITY SCORE MATRIX ({mode_name}) ====================")
 
@@ -134,26 +147,27 @@ def main():
     header_cols = [f"{'Prompt':<6}", f"{'Target':<6}", f"{'Top 3 Matches':<15}"] + short_headers
     print(" ".join(header_cols))
 
-    for idx, prompt in enumerate(query_prompts):
-        prompt_code = f"P{idx+1:02d}"
+    for idx in range(len(query_prompts)):
+        prompt_code = f"P{idx + 1:02d}"
         target_raw = target_stories[idx]
         target_code = id_to_code.get(target_raw, target_raw)
 
         # Top 3 based on raw cosine scores
         top3_indices = np.argsort(raw_scores[idx])[::-1][:3]
-        top3_str = ", ".join(f"S{j+1:02d}" for j in top3_indices)
+        top3_str = ", ".join(f"S{j + 1:02d}" for j in top3_indices)
 
         row_scores = [f"{display_scores[idx, j]:>+8.4f}" for j in range(len(story_ids))]
         print(" ".join([f"{prompt_code:<6}", f"{target_code:<6}", f"{top3_str:<15}"] + row_scores))
 
     # Print Legends to stderr so stdout table stays clean
     print("\n==================== PROMPT LEGEND ====================", file=sys.stderr)
-    for idx, (prompt, target, cat) in enumerate(zip(query_prompts, target_stories, query_categories), 1):
+    legend = zip(query_prompts, target_stories, query_categories, strict=True)
+    for idx, (prompt, target, cat) in enumerate(legend, 1):
         target_code = id_to_code.get(target, target)
-        print(f"P{idx:02d}: \"{prompt}\" (target: {target_code}, category: {cat})", file=sys.stderr)
+        print(f'P{idx:02d}: "{prompt}" (target: {target_code}, category: {cat})', file=sys.stderr)
 
     print("\n==================== STORY LEGEND =====================", file=sys.stderr)
-    for i, (sid, title) in enumerate(zip(story_ids, story_titles), 1):
+    for i, (sid, title) in enumerate(zip(story_ids, story_titles, strict=True), 1):
         print(f"S{i:02d}: [{sid}] {title}", file=sys.stderr)
 
 
