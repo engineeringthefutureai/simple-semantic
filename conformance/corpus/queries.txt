@@ -1,0 +1,12 @@
+approximate nearest neighbour graph search
+exact search recall guarantee
+metadata filtering before scoring
+byte order of the stored vectors
+how are deletes handled
+document versus query embedding
+near duplicate documents
+векторный поиск
+ベクトル検索
+recherche sémantique vecteurs
+🚀
+
