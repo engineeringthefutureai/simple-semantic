@@ -1,0 +1,14 @@
+# Lint settings for the helper scripts outside python/.
+#
+# conformance/*.py and conformance/stories/*.py are helpers — corpus wrangling,
+# fixture generation, score inspection — not library code. They are held to the
+# same style as the library but not to `mypy --strict`, which would be noise for
+# scripts whose whole job is reshaping loosely-typed YAML and JSON.
+#
+# Files under python/ find python/pyproject.toml first and are unaffected by
+# this file.
+
+line-length = 100
+
+[lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

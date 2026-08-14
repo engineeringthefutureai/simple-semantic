@@ -21,7 +21,16 @@ ok    manifest.json agrees on every non-timestamp field
 ok    python reads the kotlin index (12 queries, 110 results)
 ok    kotlin reads the python index (12 queries, 110 results)
 ok    both implementations rank identically (12 queries, 110 results)
+==> repeating the check with real recorded embeddings
+ok    stories vectors.f32 identical (30720 bytes)
+ok    both implementations rank identically on real embeddings (25 queries, 250 results)
 ```
+
+That last pair matters more than it looks. The first checks use a deterministic
+hashing embedder whose vectors are small integers before normalization; the
+second replays 30 KB of real `gemini-embedding-001` output — 768 arbitrary
+decimals per row — so any disagreement in decimal parsing, float32 narrowing or
+summation order shows up there and nowhere else.
 
 ---
 
@@ -253,13 +262,32 @@ twenty thousand.
 
 | | network | deterministic | use |
 |---|---|---|---|
-| `HashingEmbedder` | no | yes, bit-for-bit across languages | tests, conformance, CI |
+| `HashingEmbedder` | no | yes, bit-for-bit across languages | format tests, conformance |
+| `ReplayEmbedder` | no | yes, it is a recording | retrieval-quality tests |
 | `GeminiEmbedder` | yes | no | real retrieval |
 | `LocalEmbedder` | no | — | not yet built |
 
 `HashingEmbedder` is required, not optional: it is what makes the entire test
 suite and the conformance job runnable with no API key. A test suite that
 needs a credential is a test suite that stops being run.
+
+`ReplayEmbedder` covers what the hashing embedder cannot. Hashed vectors prove
+the *format* is correct and say nothing about whether search retrieves; hosted
+vectors retrieve properly but need a key, a network and money. So real
+`gemini-embedding-001` output was recorded once into
+[`conformance/fixtures/story-embeddings-v1.json`](conformance/fixtures/story-embeddings-v1.json),
+keyed by `sha256(text)`, and replayed offline. That makes genuine
+retrieval-quality assertions runnable in CI with identical numbers every run:
+
+```python
+embedder = ReplayEmbedder.from_file("conformance/fixtures/story-embeddings-v1.json")
+index = SemanticIndex.create("./stories.index", embedder)   # embedder_id: gemini-embedding-001@768
+```
+
+A miss is a loud error, never a zero vector — a mock that quietly invents a
+plausible answer is the exact failure this project refuses. Documents and
+queries live in separate maps, so asking for a document embedding of a recorded
+*query* fails instead of silently serving the wrong task type.
 
 Document and query embedding are **separate methods and stay separate**.
 Gemini needs `RETRIEVAL_DOCUMENT` versus `RETRIEVAL_QUERY`; e5/BGE-style models
@@ -273,12 +301,38 @@ request into a single embedding unless each input is wrapped individually.
 
 ---
 
+## Retrieval quality, measured
+
+Ten AI-generated stories across genres, twenty queries written to describe a
+story without naming it, and five negative controls about corporate tax
+returns, sourdough, quantum computing and bicycle brakes. Embedded once with
+`gemini-embedding-001` at 768 dimensions and replayed from a fixture, so these
+numbers are reproduced exactly by `pytest` and `gradlew test`:
+
+```
+top-1 accuracy on targeted queries: 18/20      (the target is in the top 3 for 20/20)
+targeted top score:  min 0.5538  mean 0.6679  max 0.7466
+negative top score:  min 0.5141  mean 0.5342  max 0.5507
+whole-matrix range:  0.4508 .. 0.7466          (250 query-document pairs)
+```
+
+Two things worth reading off that table.
+
+**Exact search cannot abstain.** The five negative controls have no right
+answer, and brute force still returns k results for each — it always will. What
+saves the caller is that their best score, 0.5507, sits below the *weakest*
+genuine match at 0.5538. The suite asserts that separation directly.
+
+**This is why there is no threshold API.** Every one of those 250 cosine
+similarities falls between 0.45 and 0.75. The signal is real, but it is a
+0.3-wide band sitting nowhere near zero, and where the band sits moves with the
+model and the corpus. A `score > 0.7` rule would be tuned to this fixture and
+meaningless anywhere else.
+
 ## No score thresholds
 
-The API does not expose an absolute similarity threshold and will not grow one.
-Embedding spaces are anisotropic: cosine similarities cluster in a narrow band
-that shifts with model and corpus, so `score > 0.7` means something different
-for every model and nothing at all in general. Only relative ordering carries
+The API does not expose an absolute similarity threshold and will not grow one,
+for the reason the numbers above make concrete. Only relative ordering carries
 signal.
 
 ---
@@ -289,17 +343,18 @@ Requires **JDK 22 or newer** (the Foreign Function & Memory API is final there;
 see [SPEC.md §3](SPEC.md)) and **Python 3.11+**.
 
 ```console
-$ cd kotlin && ./gradlew build          # 62 tests
+$ cd kotlin && ./gradlew build          # 74 tests
 $ cd python && uv venv .venv && uv pip install -e ".[dev]"
-$ cd python && .venv/bin/python -m pytest    # 64 tests
+$ cd python && .venv/bin/python -m pytest    # 78 tests
 $ ./conformance/run.sh                  # the one that matters
 ```
 
 `conformance/run.sh` builds an index with each implementation from the shared
-corpus, compares the files byte for byte, runs the query set four ways
-(each implementation against each index), and finally checks that both still
-read the committed v1 golden index in `conformance/fixtures/`. That fixture,
-not the code, is the regression guard on the format.
+corpus, compares the files byte for byte, runs the query set four ways (each
+implementation against each index), checks that both still read the committed
+v1 golden index in `conformance/fixtures/`, and then repeats the byte-identity
+check over the story corpus with real recorded embeddings. Those fixtures, not
+the code, are the regression guard on the format.
 
 ---
 

@@ -24,6 +24,7 @@ from .errors import (
 from .extract import SemanticId, SemanticIndexed, SemanticMeta, from_dataclass, from_lambdas
 from .format import FORMAT_VERSION, Manifest, content_hash
 from .index import AddResult, Document, Filter, SearchResult, SemanticIndex
+from .replay import ReplayEmbedder, ReplayMissError
 
 __all__ = [
     "FORMAT_VERSION",
@@ -40,6 +41,8 @@ __all__ = [
     "HashingEmbedder",
     "Manifest",
     "MetaValueError",
+    "ReplayEmbedder",
+    "ReplayMissError",
     "SearchResult",
     "SemanticId",
     "SemanticIndex",

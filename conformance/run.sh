@@ -11,6 +11,7 @@
 #   4. Each implementation runs the query set against *both* indexes.
 #   5. Ranked id lists must match exactly; scores within 1e-6.
 #   6. Both must still read the committed v1 golden index.
+#   7. The same, over the story corpus with real recorded Gemini vectors.
 #
 # Step 3 is the one that would be easy to quietly weaken. Do not.
 
@@ -30,6 +31,8 @@ OUT="$CONF/out"
 CORPUS="$CONF/corpus/corpus.jsonl"
 QUERIES="$CONF/corpus/queries.txt"
 GOLDEN="$CONF/fixtures/golden-v1"
+STORY_FIXTURE="$CONF/fixtures/story-embeddings-v1.json"
+STORY_DIR="$CONF/stories"
 
 # The golden fixture is pinned to these, so they are not free parameters.
 DIMENSION=64
@@ -64,51 +67,45 @@ py index "$OUT/python-index" -i "$CORPUS" >/dev/null
 
 # ------------------------------------------------------- byte-identity checks
 
-echo "==> comparing files byte for byte"
 status=0
-for file in vectors.f32 docs.jsonl offsets.bin; do
-  if cmp -s "$OUT/kotlin-index/$file" "$OUT/python-index/$file"; then
-    size=$(wc -c <"$OUT/kotlin-index/$file" | tr -d ' ')
-    echo "ok    $file identical ($size bytes)"
-  else
-    echo "FAIL  $file differs between implementations"
-    cmp "$OUT/kotlin-index/$file" "$OUT/python-index/$file" || true
-    status=1
-  fi
-done
+
+compare_files() {
+  local left="$1" right="$2" label="$3"
+  for file in vectors.f32 docs.jsonl offsets.bin; do
+    if cmp -s "$left/$file" "$right/$file"; then
+      local size
+      size=$(wc -c <"$left/$file" | tr -d ' ')
+      echo "ok    $label$file identical ($size bytes)"
+    else
+      echo "FAIL  $label$file differs between implementations"
+      cmp "$left/$file" "$right/$file" || true
+      status=1
+    fi
+  done
+}
+
+echo "==> comparing files byte for byte"
+compare_files "$OUT/kotlin-index" "$OUT/python-index" ""
 
 # manifest.json is deliberately excluded: created_at and updated_at are
 # wall-clock timestamps, so it cannot be byte-identical. Everything else in it
 # is compared field by field instead.
-"$PYTHON" - "$OUT/kotlin-index/manifest.json" "$OUT/python-index/manifest.json" <<'PY' || status=1
-import json, sys
-
-left = json.load(open(sys.argv[1]))
-right = json.load(open(sys.argv[2]))
-volatile = {"created_at", "updated_at"}
-left = {k: v for k, v in left.items() if k not in volatile}
-right = {k: v for k, v in right.items() if k not in volatile}
-if left != right:
-    print("FAIL  manifest.json differs beyond its timestamps")
-    print(f"      kotlin: {left}")
-    print(f"      python: {right}")
-    raise SystemExit(1)
-print("ok    manifest.json agrees on every non-timestamp field")
-PY
+"$PYTHON" "$CONF/compare_manifests.py" \
+  "$OUT/kotlin-index/manifest.json" "$OUT/python-index/manifest.json" || status=1
 
 # --------------------------------------------------------------- query sweeps
 
 # Each implementation queries each index. Four runs, so a disagreement points
 # at either the reader or the writer rather than leaving it ambiguous.
 run_queries() {
-  local runner="$1" index="$2" output="$3"
+  local runner="$1" index="$2" output="$3" queries="${4:-$QUERIES}"
   : >"$output"
   local first=1
   while IFS= read -r query; do
     if [[ $first -eq 0 ]]; then echo >>"$output"; fi
     first=0
     "$runner" search "$index" "$query" -k "$K" --json >>"$output"
-  done <"$QUERIES"
+  done <"$queries"
 }
 
 echo "==> running the query set four ways"
@@ -140,6 +137,38 @@ if [[ -d "$GOLDEN" ]]; then
     "the golden index still ranks as it did at v1"
 else
   echo "FAIL  no golden fixture at $GOLDEN"
+  status=1
+fi
+
+# ------------------------------------------------- real-embedding conformance
+
+# Everything above uses HashingEmbedder, whose vectors are small integers before
+# normalization. Recorded gemini-embedding-001 output is a strictly harder case
+# for byte-identity: 768 arbitrary decimals per row, so any disagreement in
+# decimal parsing, float32 narrowing or normalization order shows up here and
+# nowhere else in the suite.
+if [[ -f "$STORY_FIXTURE" ]]; then
+  echo "==> repeating the check with real recorded embeddings"
+
+  "$PYTHON" "$CONF/stories/export_corpus.py" \
+    --documents "$OUT/stories.jsonl" --queries "$OUT/story-queries.txt" || status=1
+
+  pyr() { "$PYTHON" -m simple_semantic.cli --embedder replay --fixture "$STORY_FIXTURE" "$@"; }
+  ktr() { "$KOTLIN_CLI" --embedder replay --fixture "$STORY_FIXTURE" "$@"; }
+
+  ktr index "$OUT/kotlin-stories" -i "$OUT/stories.jsonl" >/dev/null
+  pyr index "$OUT/python-stories" -i "$OUT/stories.jsonl" >/dev/null
+
+  compare_files "$OUT/kotlin-stories" "$OUT/python-stories" "stories "
+
+  # Only the recorded queries can be replayed, so the sweep uses those.
+  run_queries ktr "$OUT/kotlin-stories" "$OUT/ktr-on-kt.jsonl" "$OUT/story-queries.txt"
+  run_queries pyr "$OUT/python-stories" "$OUT/pyr-on-py.jsonl" "$OUT/story-queries.txt"
+  compare "$OUT/ktr-on-kt.jsonl" "$OUT/pyr-on-py.jsonl" \
+    "both implementations rank identically on real embeddings"
+else
+  echo "FAIL  no story fixture at $STORY_FIXTURE"
+  echo "      run: python conformance/stories/build_fixture.py"
   status=1
 fi
 

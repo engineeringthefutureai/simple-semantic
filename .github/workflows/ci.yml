@@ -41,6 +41,11 @@ jobs:
       - name: pytest
         working-directory: python
         run: .venv/bin/python -m pytest -q
+      - name: ruff (helper scripts)
+        # conformance/*.py are helpers, not library code, so they are linted but
+        # not type-checked. Without this step they live outside every job's
+        # working-directory and nothing checks them at all.
+        run: python/.venv/bin/ruff check conformance/ && python/.venv/bin/ruff format --check conformance/
 
   conformance:
     runs-on: ubuntu-latest
@@ -52,6 +57,14 @@ jobs:
           java-version: "22"
       - uses: gradle/actions/setup-gradle@v4
       - uses: astral-sh/setup-uv@v5
+      - name: story fixture is reproducible from its source
+        # The fixture is committed, and it is generated. If regenerating it from
+        # the YAML produces different bytes, one of the two has drifted.
+        run: |
+          uv venv .venv && .venv/bin/python -m pip install -q pyyaml
+          cp conformance/fixtures/story-embeddings-v1.json /tmp/committed.json
+          .venv/bin/python conformance/stories/build_fixture.py
+          diff -q /tmp/committed.json conformance/fixtures/story-embeddings-v1.json
       - name: cross-implementation conformance
         # The runner's default locale is C, under which the JVM decodes
         # command-line arguments as US-ASCII and every non-Latin query in the
