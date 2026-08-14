@@ -14,10 +14,15 @@ Features:
 - Full prompt and story legends printed to stderr.
 
 Usage:
-    python conformance/stories/inspect_scores.py
-    python conformance/stories/inspect_scores.py --minmax
-    python conformance/stories/inspect_scores.py --zscore
+    uv run --script conformance/stories/inspect_scores.py
+    uv run --script conformance/stories/inspect_scores.py --minmax
+    uv run --script conformance/stories/inspect_scores.py --zscore
 """
+
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["numpy", "pyyaml"]
+# ///
 
 import argparse
 import sys

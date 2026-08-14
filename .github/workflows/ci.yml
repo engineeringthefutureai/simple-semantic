@@ -82,12 +82,11 @@ jobs:
         # The fixture is committed, and it is generated. If regenerating it from
         # the YAML produces different bytes, one of the two has drifted.
         run: |
-          # uv venv does not seed pip, so install through uv rather than
-          # through the venv's own python.
-          uv venv .venv
-          uv pip install --python .venv/bin/python -q pyyaml
+          # The script declares its own dependencies inline (PEP 723), so
+          # `uv run --script` installs exactly those. Nothing here needs to
+          # know what the helper imports.
           cp conformance/fixtures/story-embeddings-v1.json /tmp/committed.json
-          .venv/bin/python conformance/stories/build_fixture.py
+          uv run --script conformance/stories/build_fixture.py
           diff -q /tmp/committed.json conformance/fixtures/story-embeddings-v1.json
       - name: cross-implementation conformance
         # The runner's default locale is C, under which the JVM decodes

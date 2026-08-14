@@ -34,7 +34,7 @@ from stories import FIXTURE, Query, Story, load_queries, load_stories
 
 pytestmark = pytest.mark.skipif(
     not FIXTURE.exists(),
-    reason=f"{FIXTURE} not built; run conformance/stories/build_fixture.py",
+    reason=f"{FIXTURE} not built; run: uv run --script conformance/stories/build_fixture.py",
 )
 
 

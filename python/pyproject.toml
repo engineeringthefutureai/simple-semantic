@@ -41,6 +41,3 @@ strict = true
 # interpreter, and CI runs it on both ends of the supported range instead.
 files = ["src/simple_semantic"]
 
-[[tool.mypy.overrides]]
-module = "httpx.*"
-ignore_missing_imports = true

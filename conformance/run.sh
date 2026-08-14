@@ -168,7 +168,7 @@ if [[ -f "$STORY_FIXTURE" ]]; then
     "both implementations rank identically on real embeddings"
 else
   echo "FAIL  no story fixture at $STORY_FIXTURE"
-  echo "      run: python conformance/stories/build_fixture.py"
+  echo "      run: uv run --script conformance/stories/build_fixture.py"
   status=1
 fi
 

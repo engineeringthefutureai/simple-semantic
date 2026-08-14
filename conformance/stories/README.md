@@ -9,12 +9,11 @@ This directory contains 10 benchmark stories across diverse fiction genres.
 
 ## Batch Embedding Script
 
-A Python script [generate_embeddings.py](generate_embeddings.py) is provided to generate embeddings for all 10 story files and 25 queries using Google's official `google-genai` SDK.
+A Python script [generate_embeddings.py](generate_embeddings.py) generates embeddings for all 10 story files and 25 queries using Google's official `google-genai` SDK.
 
 ### Setup & Execution:
 
 ```bash
-pip install google-genai pyyaml numpy
 export GEMINI_API_KEY="your-gemini-api-key"
 python conformance/stories/generate_embeddings.py
 ```
@@ -39,7 +38,7 @@ A debug/inspection script [inspect_scores.py](inspect_scores.py) multiplies the 
 ### Modes:
 - **Raw Cosine Similarity**:
   ```bash
-  python conformance/stories/inspect_scores.py
+  uv run --script conformance/stories/inspect_scores.py
   ```
 - **Min-Max Normalized [0.00 to 1.00]** (highlights contrast against the
   background noise floor). Read it as contrast only: min-max forces the best
@@ -47,11 +46,11 @@ A debug/inspection script [inspect_scores.py](inspect_scores.py) multiplies the 
   0.30-wide band look like a calibrated score. The library deliberately
   exposes no absolute threshold, for the reason this view makes vivid:
   ```bash
-  python conformance/stories/inspect_scores.py --minmax
+  uv run --script conformance/stories/inspect_scores.py --minmax
   ```
 - **Z-Score Standardized** (std deviations from corpus baseline mean):
   ```bash
-  python conformance/stories/inspect_scores.py --zscore
+  uv run --script conformance/stories/inspect_scores.py --zscore
   ```
 
 ---
@@ -63,7 +62,7 @@ A debug/inspection script [inspect_scores.py](inspect_scores.py) multiplies the 
 a language-neutral recording keyed by `sha256(text)`:
 
 ```bash
-python conformance/stories/build_fixture.py
+uv run --script conformance/stories/build_fixture.py
 ```
 
 That file is what `ReplayEmbedder` reads in both implementations, so the

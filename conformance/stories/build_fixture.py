@@ -30,22 +30,22 @@ vectors. A single flat map would quietly serve one where the other was meant,
 which is exactly the asymmetry the ``Embedder`` interface exists to preserve.
 
 Usage:
-    python conformance/stories/build_fixture.py
+    uv run --script conformance/stories/build_fixture.py
 """
+
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["pyyaml"]
+# ///
 
 from __future__ import annotations
 
 import hashlib
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
-try:
-    import yaml
-except ImportError:
-    print("Error: 'pyyaml' is not installed. Install it with: pip install pyyaml")
-    sys.exit(1)
+import yaml
 
 FIXTURE_VERSION = 1
 QUERY_CATEGORIES = ["short_queries", "medium_queries", "long_queries", "irrelevant_queries"]

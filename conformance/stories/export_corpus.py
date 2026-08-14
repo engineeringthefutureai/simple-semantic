@@ -7,6 +7,9 @@ two so that neither the harness nor the CLI grows a YAML dependency.
 
     python conformance/stories/export_corpus.py \
         --documents out/stories.jsonl --queries out/story-queries.txt
+
+Standard library only, deliberately: conformance/run.sh calls it with the
+project's own venv, which has no YAML library and does not need one.
 """
 
 from __future__ import annotations

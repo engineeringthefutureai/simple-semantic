@@ -10,13 +10,15 @@
    (short, medium, long, and irrelevant negative control prompts).
    Saves updated queries to queries.yaml with single-line embedding vectors.
 
-Requirements:
-    pip install google-genai pyyaml
-
 Usage:
     export GEMINI_API_KEY="your-api-key"
-    python conformance/stories/generate_embeddings.py
+    uv run --script conformance/stories/generate_embeddings.py
 """
+
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["google-genai", "pyyaml"]
+# ///
 
 import json
 import os
@@ -24,15 +26,8 @@ import sys
 from pathlib import Path
 
 import yaml
-
-try:
-    from google import genai
-    from google.genai import types
-except ImportError:
-    print("Error: 'google-genai' package is not installed.")
-    print("Install it with: pip install google-genai pyyaml")
-    sys.exit(1)
-
+from google import genai
+from google.genai import types
 
 DEFAULT_MODEL = "gemini-embedding-001"
 DEFAULT_DIMENSION = 768
