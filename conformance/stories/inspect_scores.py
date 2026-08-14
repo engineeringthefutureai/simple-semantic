@@ -6,17 +6,20 @@ computes the dot product / cosine similarity matrix (Q_norm @ S_norm.T), and pri
 formatted matrix table for manual inspection.
 
 Features:
-- Header banner & empty line before matrix table.
-- Prompts labeled P01-P20 and stories labeled S01-S10.
+- Supports raw cosine scores or --minmax / --zscore normalized scores for enhanced contrast.
+- Prompts labeled P01-P25 and stories labeled S01-S10.
 - Target story printed in S01-S10 notation.
-- 'Top 3 Matches' column showing top 3 most relevant stories sorted by similarity.
-- Native fixed-width column formatting (no external piping required).
+- Added 'Top 3 Matches' column showing top 3 most relevant stories sorted by similarity.
+- Native fixed-width column formatting.
 - Full prompt and story legends printed to stderr.
 
 Usage:
     python conformance/stories/inspect_scores.py
+    python conformance/stories/inspect_scores.py --minmax
+    python conformance/stories/inspect_scores.py --zscore
 """
 
+import argparse
 import sys
 from pathlib import Path
 import numpy as np
@@ -24,6 +27,19 @@ import yaml
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Inspect query x story similarity score matrix.")
+    parser.add_argument(
+        "--minmax",
+        action="store_true",
+        help="Apply min-max normalization across the matrix [0.00 to 1.00] to highlight relative contrast.",
+    )
+    parser.add_argument(
+        "--zscore",
+        action="store_true",
+        help="Apply z-score standardization (mean=0, std=1) to measure standard deviations from baseline noise.",
+    )
+    args = parser.parse_args()
+
     stories_dir = Path(__file__).parent
     metadata_path = stories_dir / "metadata.yaml"
     queries_path = stories_dir / "queries.yaml"
@@ -71,7 +87,8 @@ def main():
     query_categories = []
     query_vecs = []
 
-    for cat in ["short_queries", "medium_queries", "long_queries"]:
+    categories = ["short_queries", "medium_queries", "long_queries", "irrelevant_queries"]
+    for cat in categories:
         if cat in queries_data:
             for item in queries_data[cat]:
                 if "embedding" not in item or not item["embedding"]:
@@ -86,20 +103,32 @@ def main():
                 query_categories.append(cat)
                 query_vecs.append(item["embedding"])
 
-    # Query Matrix Q: (20, D)
+    # Query Matrix Q: (25, D)
     Q = np.array(query_vecs, dtype=np.float32)
     norms_Q = np.linalg.norm(Q, axis=1, keepdims=True)
     norms_Q[norms_Q == 0] = 1.0
     Q_norm = Q / norms_Q
 
-    # 3. Compute Similarity Scores Matrix: Q_norm @ S_norm.T (20 x 10)
-    scores = Q_norm @ S_norm.T
+    # 3. Compute Similarity Scores Matrix: Q_norm @ S_norm.T (25 x 10)
+    raw_scores = Q_norm @ S_norm.T
 
-    # 4. Output Formatted Table with Fixed-Width Columns
+    # 4. Optional Calibration / Normalization
+    mode_name = "RAW COSINE SIMILARITY"
+    if args.minmax:
+        s_min, s_max = float(np.min(raw_scores)), float(np.max(raw_scores))
+        display_scores = (raw_scores - s_min) / (s_max - s_min) if s_max > s_min else raw_scores
+        mode_name = f"MIN-MAX NORMALIZED [0.00 to 1.00] (raw min={s_min:+.4f}, max={s_max:+.4f})"
+    elif args.zscore:
+        mean, std = float(np.mean(raw_scores)), float(np.std(raw_scores))
+        display_scores = (raw_scores - mean) / std if std > 0 else raw_scores
+        mode_name = f"Z-SCORE STANDARDIZED (raw mean={mean:+.4f}, std={std:.4f})"
+    else:
+        display_scores = raw_scores
+
+    # 5. Output Formatted Table
     short_headers = [f"{f'S{i+1:02d}':>8}" for i in range(len(story_ids))]
 
-    # Empty line and header banner before table
-    print("\n==================== SIMILARITY SCORE MATRIX ====================")
+    print(f"\n==================== SIMILARITY SCORE MATRIX ({mode_name}) ====================")
 
     # Table Header
     header_cols = [f"{'Prompt':<6}", f"{'Target':<6}", f"{'Top 3 Matches':<15}"] + short_headers
@@ -110,14 +139,14 @@ def main():
         target_raw = target_stories[idx]
         target_code = id_to_code.get(target_raw, target_raw)
 
-        # Calculate top 3 story indices sorted by score descending
-        top3_indices = np.argsort(scores[idx])[::-1][:3]
+        # Top 3 based on raw cosine scores
+        top3_indices = np.argsort(raw_scores[idx])[::-1][:3]
         top3_str = ", ".join(f"S{j+1:02d}" for j in top3_indices)
 
-        row_scores = [f"{scores[idx, j]:>+8.4f}" for j in range(len(story_ids))]
+        row_scores = [f"{display_scores[idx, j]:>+8.4f}" for j in range(len(story_ids))]
         print(" ".join([f"{prompt_code:<6}", f"{target_code:<6}", f"{top3_str:<15}"] + row_scores))
 
-    # Print Legends to stderr so stdout table stays clean for redirection
+    # Print Legends to stderr so stdout table stays clean
     print("\n==================== PROMPT LEGEND ====================", file=sys.stderr)
     for idx, (prompt, target, cat) in enumerate(zip(query_prompts, target_stories, query_categories), 1):
         target_code = id_to_code.get(target, target)

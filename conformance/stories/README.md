@@ -9,7 +9,7 @@ This directory contains 10 benchmark stories across diverse fiction genres.
 
 ## Batch Embedding Script
 
-A Python script [generate_embeddings.py](file:///home/kiryl/simple-semantic/conformance/stories/generate_embeddings.py) is provided to generate embeddings for all 10 story files and 20 queries using Google's official `google-genai` SDK.
+A Python script [generate_embeddings.py](file:///home/kiryl/simple-semantic/conformance/stories/generate_embeddings.py) is provided to generate embeddings for all 10 story files and 25 queries using Google's official `google-genai` SDK.
 
 ### Setup & Execution:
 
@@ -23,20 +23,31 @@ python conformance/stories/generate_embeddings.py
 
 ## Matrix Score Inspection Script
 
-A debug/inspection script [inspect_scores.py](file:///home/kiryl/simple-semantic/conformance/stories/inspect_scores.py) multiplies the query embedding matrix by the story embedding matrix ($Q \times S^T$) and outputs a formatted table of similarity scores directly:
+A debug/inspection script [inspect_scores.py](file:///home/kiryl/simple-semantic/conformance/stories/inspect_scores.py) multiplies the query embedding matrix by the story embedding matrix ($Q \times S^T$) and outputs a formatted table of similarity scores.
 
-```bash
-python conformance/stories/inspect_scores.py
-```
+### Modes:
+- **Raw Cosine Similarity**:
+  ```bash
+  python conformance/stories/inspect_scores.py
+  ```
+- **Min-Max Normalized [0.00 to 1.00]** (highlights contrast against background noise floor):
+  ```bash
+  python conformance/stories/inspect_scores.py --minmax
+  ```
+- **Z-Score Standardized** (std deviations from corpus baseline mean):
+  ```bash
+  python conformance/stories/inspect_scores.py --zscore
+  ```
 
 ---
 
 ## Hypothetical Search Queries
 
-Hypothetical semantic search queries are stored in [queries.yaml](file:///home/kiryl/simple-semantic/conformance/stories/queries.yaml). They are designed for concept retrieval without relying on literal character names or story keywords:
+Hypothetical semantic search queries are stored in [queries.yaml](file:///home/kiryl/simple-semantic/conformance/stories/queries.yaml). They test concept retrieval without relying on literal character names or story keywords:
 - **5 short queries** (up to 3 words)
 - **5 medium queries** (up to 5 words)
 - **10 long queries** (up to 10 words)
+- **5 irrelevant queries** (negative controls of various lengths, e.g. corporate tax returns, baking sourdough bread, quantum computing, hydraulic bike brakes)
 
 ---
 

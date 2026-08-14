@@ -6,7 +6,8 @@
    Saves updated stories to metadata.yaml with single-line embedding vectors.
 
 2. Reads search prompts from conformance/stories/queries.yaml and sends a second
-   batch request (task_type="RETRIEVAL_QUERY") to generate embeddings for all 20 queries.
+   batch request (task_type="RETRIEVAL_QUERY") to generate embeddings for all 25 queries
+   (short, medium, long, and irrelevant negative control prompts).
    Saves updated queries to queries.yaml with single-line embedding vectors.
 
 Requirements:
@@ -58,7 +59,8 @@ def format_queries_yaml(data: dict) -> str:
         "",
     ]
 
-    for category in ["short_queries", "medium_queries", "long_queries"]:
+    categories = ["short_queries", "medium_queries", "long_queries", "irrelevant_queries"]
+    for category in categories:
         if category not in data:
             continue
         lines.append(f"{category}:")
@@ -150,7 +152,8 @@ def generate_and_save_all_embeddings():
 
     query_items = []
     query_prompts = []
-    for category in ["short_queries", "medium_queries", "long_queries"]:
+    categories = ["short_queries", "medium_queries", "long_queries", "irrelevant_queries"]
+    for category in categories:
         if category in queries_data:
             for item in queries_data[category]:
                 query_items.append(item)
