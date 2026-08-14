@@ -9,14 +9,24 @@ This directory contains 10 benchmark stories across diverse fiction genres.
 
 ## Batch Embedding Script
 
-A Python script [generate_embeddings.py](file:///home/kiryl/simple-semantic/conformance/stories/generate_embeddings.py) is provided to generate embeddings for all 10 story files in a single batch API call using Google's official `google-genai` SDK.
+A Python script [generate_embeddings.py](file:///home/kiryl/simple-semantic/conformance/stories/generate_embeddings.py) is provided to generate embeddings for all 10 story files and 20 queries using Google's official `google-genai` SDK.
 
 ### Setup & Execution:
 
 ```bash
-pip install google-genai pyyaml
+pip install google-genai pyyaml numpy
 export GEMINI_API_KEY="your-gemini-api-key"
 python conformance/stories/generate_embeddings.py
+```
+
+---
+
+## Matrix Score Inspection Script
+
+A debug/inspection script [inspect_scores.py](file:///home/kiryl/simple-semantic/conformance/stories/inspect_scores.py) multiplies the query embedding matrix by the story embedding matrix ($Q \times S^T$) and outputs a formatted table of similarity scores directly:
+
+```bash
+python conformance/stories/inspect_scores.py
 ```
 
 ---
