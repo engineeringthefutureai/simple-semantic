@@ -1,0 +1,1048 @@
+<title>simple-semantic Analysis</title>
+
+<style>
+  /* ---------------------------------------------------------------- tokens
+     Light is the base. Neutrals carry a slight cool-blue cast so they read
+     as chosen rather than inherited, biased toward the teal accent. */
+  :root {
+    --ground:      #FAFBFC;
+    --surface:     #FFFFFF;
+    --surface-sub: #F1F4F7;
+    --ink:         #141A21;
+    --ink-soft:    #3F4A57;
+    --ink-faint:   #6B7684;
+    --rule:        #DCE2E9;
+    --rule-strong: #B9C3CE;
+    --accent:      #0E6B78;
+    --accent-soft: #E2F0F1;
+    --pass:        #1F6B4A;
+    --pass-soft:   #E3F1E9;
+    --flag:        #8A5A10;
+    --flag-soft:   #F7EEDD;
+
+    --serif: Charter, "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif;
+    --mono:  ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
+
+    --measure: 65ch;
+    --step--1: 0.815rem;
+    --step-0:  1.0625rem;
+    --step-1:  1.32rem;
+    --step-2:  1.72rem;
+    --step-3:  2.3rem;
+    --step-4:  3.1rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #0D1218;
+      --surface:     #131A22;
+      --surface-sub: #19222C;
+      --ink:         #E4EAF0;
+      --ink-soft:    #AAB6C3;
+      --ink-faint:   #77848F;
+      --rule:        #253039;
+      --rule-strong: #3A4854;
+      --accent:      #5FC6D0;
+      --accent-soft: #102A2F;
+      --pass:        #6ECB9B;
+      --pass-soft:   #10251C;
+      --flag:        #D9A455;
+      --flag-soft:   #2A2113;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #0D1218;
+    --surface:     #131A22;
+    --surface-sub: #19222C;
+    --ink:         #E4EAF0;
+    --ink-soft:    #AAB6C3;
+    --ink-faint:   #77848F;
+    --rule:        #253039;
+    --rule-strong: #3A4854;
+    --accent:      #5FC6D0;
+    --accent-soft: #102A2F;
+    --pass:        #6ECB9B;
+    --pass-soft:   #10251C;
+    --flag:        #D9A455;
+    --flag-soft:   #2A2113;
+  }
+
+  /* ---------------------------------------------------------------- base */
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: var(--step-0);
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+    padding: 0 1.5rem 6rem;
+  }
+
+  .wrap {
+    max-width: 78rem;
+    margin: 0 auto;
+  }
+
+  /* Prose sits in a measured column; data breaks out wider. */
+  .col {
+    max-width: var(--measure);
+  }
+
+  p, ul, ol { margin: 0; }
+
+  .flow > * + * { margin-top: 1.05em; }
+
+  a {
+    color: var(--accent);
+    text-underline-offset: 2px;
+    text-decoration-thickness: 1px;
+  }
+  a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code, .mono { font-family: var(--mono); }
+
+  p code, li code, td code {
+    font-size: 0.855em;
+    background: var(--surface-sub);
+    padding: 0.1em 0.34em;
+    border-radius: 3px;
+    word-break: break-word;
+  }
+
+  strong { font-weight: 700; color: var(--ink); }
+
+  /* --------------------------------------------------------------- masthead
+     Titled like the spec document the project revolves around. */
+  .masthead {
+    padding: 5rem 0 2.5rem;
+    border-bottom: 2px solid var(--ink);
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    text-transform: uppercase;
+    letter-spacing: 0.13em;
+    color: var(--ink-faint);
+  }
+
+  .masthead h1 {
+    font-size: var(--step-4);
+    line-height: 1.02;
+    font-weight: 700;
+    letter-spacing: -0.021em;
+    text-wrap: balance;
+    margin: 1.1rem 0 0;
+  }
+
+  .masthead h1 .mono {
+    font-size: 0.86em;
+    letter-spacing: -0.03em;
+  }
+
+  .standfirst {
+    font-size: var(--step-1);
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 46ch;
+    margin-top: 1.3rem;
+  }
+
+  .colophon {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 2.2rem;
+    margin-top: 2.4rem;
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    color: var(--ink-faint);
+  }
+  .colophon b {
+    color: var(--ink-soft);
+    font-weight: 400;
+  }
+
+  /* --------------------------------------------------------------- sections
+     Left rail carries the section mark, echoing a numbered specification. */
+  section { padding-top: 4.2rem; }
+
+  .rail {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.6rem;
+  }
+
+  @media (min-width: 62rem) {
+    .rail {
+      grid-template-columns: 8.5rem minmax(0, 1fr);
+      gap: 2.5rem;
+    }
+  }
+
+  .rail__mark {
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    text-transform: uppercase;
+    letter-spacing: 0.13em;
+    color: var(--ink-faint);
+    padding-top: 0.55rem;
+  }
+
+  h2 {
+    font-size: var(--step-3);
+    line-height: 1.12;
+    font-weight: 700;
+    letter-spacing: -0.017em;
+    text-wrap: balance;
+    margin: 0 0 1.4rem;
+  }
+
+  h3 {
+    font-size: var(--step-1);
+    line-height: 1.28;
+    font-weight: 700;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  /* ------------------------------------------------------------ gate table */
+  .tablewrap {
+    overflow-x: auto;
+    border-block: 1px solid var(--rule);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.95rem;
+  }
+
+  th {
+    text-align: left;
+    font-family: var(--mono);
+    font-weight: 400;
+    font-size: var(--step--1);
+    text-transform: uppercase;
+    letter-spacing: 0.11em;
+    color: var(--ink-faint);
+    padding: 0.75rem 1rem 0.75rem 0;
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.72rem 1rem 0.72rem 0;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: baseline;
+  }
+  tr:last-child td { border-bottom: 0; }
+
+  td.gate { font-family: var(--mono); font-size: 0.86rem; }
+  td.num  { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .tick {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.42em;
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--pass);
+    background: var(--pass-soft);
+    padding: 0.18em 0.55em;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+
+  /* ----------------------------------------------------------------- code */
+  pre {
+    margin: 0;
+    overflow-x: auto;
+    background: var(--surface-sub);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 1rem 1.15rem;
+    font-family: var(--mono);
+    font-size: 0.845rem;
+    line-height: 1.65;
+    color: var(--ink-soft);
+    tab-size: 2;
+  }
+  pre b { color: var(--ink); font-weight: 700; }
+  pre i { color: var(--ink-faint); font-style: normal; }
+
+  /* --------------------------------------------------------- divergence
+     The report's core unit: one behaviour, two implementations. Bespoke
+     because "where do they disagree" is the whole subject. */
+  .diverge {
+    display: grid;
+    gap: 0;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  @media (min-width: 46rem) {
+    .diverge { grid-template-columns: 1fr 1fr; }
+  }
+
+  .diverge__side {
+    padding: 0.95rem 1.1rem;
+    background: var(--surface);
+    min-width: 0;
+  }
+  .diverge__side + .diverge__side {
+    border-top: 1px solid var(--rule);
+  }
+  @media (min-width: 46rem) {
+    .diverge__side + .diverge__side {
+      border-top: 0;
+      border-left: 1px solid var(--rule);
+    }
+  }
+
+  .diverge__impl {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.13em;
+    color: var(--ink-faint);
+    margin-bottom: 0.5rem;
+  }
+
+  .diverge__body {
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    line-height: 1.55;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .diverge__side--right .diverge__body { color: var(--flag); }
+  .diverge__side--left  .diverge__body { color: var(--pass); }
+
+  /* -------------------------------------------------------------- findings
+     Numbered because the closing section cross-references them by number —
+     the sequence carries information, it isn't ornament. */
+  .finding {
+    padding-top: 2.9rem;
+    margin-top: 2.9rem;
+    border-top: 1px solid var(--rule);
+  }
+  .finding:first-of-type { border-top: 0; margin-top: 0; padding-top: 0; }
+
+  .finding__head {
+    display: grid;
+    grid-template-columns: 2.6rem minmax(0, 1fr);
+    gap: 0 1rem;
+    align-items: start;
+  }
+
+  .finding__n {
+    font-family: var(--mono);
+    font-size: var(--step-1);
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1.3;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .finding__body {
+    grid-column: 2;
+    margin-top: 1rem;
+  }
+  @media (max-width: 46rem) {
+    .finding__head { grid-template-columns: 1fr; }
+    .finding__n { font-size: var(--step-0); margin-bottom: 0.2rem; }
+    .finding__body { grid-column: 1; }
+  }
+
+  .fix {
+    border-left: 2px solid var(--accent);
+    padding: 0.15rem 0 0.15rem 1rem;
+    color: var(--ink-soft);
+  }
+  .fix b {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.25rem;
+  }
+
+  /* ------------------------------------------------------------ smaller notes */
+  .notes { display: grid; gap: 1.9rem; }
+  .note__h {
+    font-size: var(--step-0);
+    font-weight: 700;
+    margin: 0 0 0.4rem;
+  }
+
+  ul.plain {
+    list-style: none;
+    padding: 0;
+    display: grid;
+    gap: 0.55rem;
+  }
+  ul.plain li {
+    padding-left: 1.2rem;
+    position: relative;
+    color: var(--ink-soft);
+  }
+  ul.plain li::before {
+    content: "—";
+    position: absolute;
+    left: 0;
+    color: var(--rule-strong);
+  }
+
+  .callout {
+    background: var(--accent-soft);
+    border-radius: 4px;
+    padding: 1.15rem 1.3rem;
+    color: var(--ink-soft);
+  }
+
+  hr.close {
+    border: 0;
+    border-top: 2px solid var(--ink);
+    margin: 4.5rem 0 0;
+  }
+
+  .pullquote {
+    font-size: var(--step-2);
+    line-height: 1.34;
+    letter-spacing: -0.012em;
+    color: var(--ink);
+    text-wrap: balance;
+    margin: 0;
+  }
+  .pullquote .mono { font-size: 0.78em; color: var(--accent); }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">Independent code analysis</div>
+    <h1><span class="mono">simple-semantic</span><br>a deep read</h1>
+    <p class="standfirst">
+      Two implementations, one on-disk format, and a spec that claims they
+      produce identical bytes. They do. Here is where they don't quite.
+    </p>
+    <div class="colophon">
+      <span><b>Commit</b> 7138942</span>
+      <span><b>Scope</b> Kotlin + Python + conformance</span>
+      <span><b>Method</b> built and run, not read</span>
+    </div>
+  </header>
+
+  <!-- ============================================================ status -->
+  <section>
+    <div class="rail">
+      <div class="rail__mark">Status</div>
+      <div>
+        <h2>Everything it claims is true</h2>
+        <div class="col flow">
+          <p>
+            Every gate was executed, not taken on trust. Byte-identity holds on
+            the hashing corpus <em>and</em> on the real recorded Gemini
+            embeddings; both implementations cross-read each other's output;
+            the committed v1 golden index still ranks as it did.
+          </p>
+        </div>
+
+        <div class="tablewrap" style="margin-top:1.7rem">
+          <table>
+            <thead>
+              <tr><th>Gate</th><th>Result</th><th>Detail</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="gate">python -m pytest</td>
+                <td><span class="tick">Pass</span></td>
+                <td class="num">78 passed</td>
+              </tr>
+              <tr>
+                <td class="gate">ruff check / format</td>
+                <td><span class="tick">Pass</span></td>
+                <td>clean, including <code>conformance/</code></td>
+              </tr>
+              <tr>
+                <td class="gate">mypy --strict</td>
+                <td><span class="tick">Pass</span></td>
+                <td class="num">12 source files</td>
+              </tr>
+              <tr>
+                <td class="gate">./gradlew build</td>
+                <td><span class="tick">Pass</span></td>
+                <td class="num">73 tests</td>
+              </tr>
+              <tr>
+                <td class="gate">./conformance/run.sh</td>
+                <td><span class="tick">Pass</span></td>
+                <td class="num">all 17 checks</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="col flow" style="margin-top:1.7rem">
+          <p>
+            One environment note: the machine had JDK 21, below the JDK 22
+            floor. The build fails with a deliberate, accurate message from
+            <code>build.gradle.kts</code> rather than a confusing
+            <code>cannot find symbol java.lang.foreign.Arena</code>. I installed
+            JDK 25 to verify the Kotlin half; it builds and passes there.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================== strengths -->
+  <section>
+    <div class="rail">
+      <div class="rail__mark">Assessment</div>
+      <div>
+        <h2>What this codebase gets right</h2>
+        <div class="col flow">
+          <p>
+            This is a genuinely disciplined project, and the discipline is in
+            the right place. Three things stand out.
+          </p>
+
+          <p>
+            <strong>The spec is normative and the code is subordinate to it.</strong>
+            <code>SPEC.md</code> doesn't describe what the code does — it says
+            what the code must do, and the code carries <code>SPEC.md §N</code>
+            references back to the clause it implements. The spec argues for its
+            own choices (why NUL separators, why LSB-first, why <code>e_0</code>
+            for the zero vector), so a future reader can tell an arbitrary
+            decision from a load-bearing one. That distinction is what usually
+            rots first.
+          </p>
+
+          <p>
+            <strong>The hard parts are the specified parts.</strong> §3.1 pins
+            normalization arithmetic down to accumulation order and intermediate
+            precision, because that is exactly where two languages drift in the
+            last ulp. §8 then <em>deliberately</em> leaves the scoring reduction
+            order free — and pins the tie-break instead, because the tie-break is
+            what actually keeps ranked lists identical once the reduction is
+            unconstrained. The note that a bare <code>argpartition</code> /
+            <code>nth_element</code> returns a different <em>set</em> rather than
+            a different <em>order</em> is a subtle bug most projects ship.
+          </p>
+        </div>
+
+        <div class="col" style="margin-top:1.5rem">
+<pre><i># Both implementations handle it, differently and correctly.</i>
+threshold  = scores[np.argpartition(-scores, limit - 1)[limit - 1]]
+better     = np.flatnonzero(scores &gt; threshold)
+tied       = np.flatnonzero(scores == threshold)
+candidates = np.concatenate([better, tied[: limit - better.size]])</pre>
+        </div>
+
+        <div class="col flow" style="margin-top:1.5rem">
+          <p>
+            I confirmed the tie behaviour on five identical vectors: rows
+            <code>[0, 1, 2]</code> at score <code>1.0</code>, as specified.
+          </p>
+
+          <p>
+            <strong>The failure modes chosen are loud ones.</strong>
+            <code>open()</code> refuses an <code>embedder_id</code> mismatch
+            naming both ids; <code>ReplayEmbedder</code> makes a miss an error
+            naming the mode, the text and the fixture rather than returning a
+            plausible zero vector; float values in <code>meta</code> are rejected
+            at <em>write</em> time, because by read time the bad file already
+            exists. The refusal to expose an absolute similarity threshold —
+            justified with measured data showing all 250 pairs inside a 0.3-wide
+            band far from zero — is a real API decision backed by evidence.
+          </p>
+
+          <p>
+            The test suites are not decoration. 73 + 78 tests cover
+            <em>ties at the k boundary keep the lowest rows</em>, <em>an existing
+            row is never mutated in place</em>, <em>a leftover staging directory
+            does not block compaction</em>. The README snippets are executed by
+            <code>test_readme.py</code> and <code>ReadmeSpec.kt</code>, so they
+            cannot drift.
+          </p>
+
+          <div class="callout">
+            Given that baseline, the findings below are narrow. They are real,
+            but none of them makes the project's central claim false.
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ findings -->
+  <section>
+    <div class="rail">
+      <div class="rail__mark">Findings</div>
+      <div>
+        <h2>Six places the two drift apart</h2>
+
+        <!-- 1 -->
+        <article class="finding">
+          <div class="finding__head">
+            <div class="finding__n">1</div>
+            <h3>Kotlin reports a future format version as corruption</h3>
+            <div class="finding__body col flow">
+              <p>
+                <code>Manifest.decode</code> deserializes the whole
+                <code>ManifestWire</code> <em>before</em> checking
+                <code>formatVersion</code>. Python checks the version first,
+                then decodes.
+              </p>
+<pre>val wire = try {
+    WireJson.decodeFromString(ManifestWire.serializer(), raw)   <b>// &lt;- fails first</b>
+} catch (exc: SerializationException) {
+    throw CorruptIndexException("$path: manifest is not valid JSON ...")
+}
+if (wire.formatVersion != FORMAT_VERSION) { throw FormatVersionException(...) }</pre>
+              <p>
+                A v2 manifest that changes the field set — which is what §9
+                <em>defines</em> a version bump to be — produces the wrong error.
+                Verified against a <code>format_version: 2</code> manifest:
+              </p>
+            </div>
+          </div>
+
+          <div class="diverge" style="margin-top:1.1rem">
+            <div class="diverge__side diverge__side--left">
+              <div class="diverge__impl">Python — correct</div>
+              <div class="diverge__body">FormatVersionError: declares
+format_version 2; this build
+supports version 1</div>
+            </div>
+            <div class="diverge__side diverge__side--right">
+              <div class="diverge__impl">Kotlin — misleading</div>
+              <div class="diverge__body">CorruptIndexException: manifest is
+not valid JSON (Fields [chunker_id,
+row_count, live_count, created_at,
+updated_at] are required ... but
+they were missing)</div>
+            </div>
+          </div>
+
+          <div class="col flow" style="margin-top:1.2rem">
+            <p>
+              SPEC §2.2 lists “<code>format_version</code> is known” as
+              <strong>check 1</strong>, before anything structural. The existing
+              Kotlin test <em>open refuses an unknown format version</em> passes
+              because it rewrites <code>"format_version":1</code> to
+              <code>99</code> inside an otherwise complete v1 manifest — every
+              other field is still present, so deserialization succeeds and the
+              version check is reached. The test's construction is precisely
+              what hides the ordering bug.
+            </p>
+            <p>
+              This matters on the day v2 ships: every v1 Kotlin reader in the
+              field will tell its user the index is corrupt rather than that the
+              library is too old.
+            </p>
+            <p class="fix">
+              <b>Fix</b>
+              Peek <code>format_version</code> before decoding the rest — a
+              two-field <code>@Serializable</code> probe class, or a
+              <code>JsonObject</code> lookup — then decode the full wire.
+            </p>
+          </div>
+        </article>
+
+        <!-- 2 -->
+        <article class="finding">
+          <div class="finding__head">
+            <div class="finding__n">2</div>
+            <h3><code>searchVector</code> can exhaust memory on a large <code>k</code></h3>
+            <div class="finding__body col flow">
+<pre>val heap = PriorityQueue&lt;Hit&gt;(<b>k</b>, WORST_FIRST)</pre>
+              <p>
+                <code>PriorityQueue</code> allocates its backing array eagerly,
+                so <code>k</code> is an allocation request, not a bound.
+                Verified on a <strong>5-row</strong> index:
+              </p>
+<pre>searchVector(q, Int.MAX_VALUE) -&gt; <b>OutOfMemoryError</b>: Requested array size exceeds VM limit
+searchVector(q, 5_000_000)     -&gt; ok, 5 results   <i>(after allocating 5M slots)</i></pre>
+              <p>
+                Python caps first (<code>limit = min(k, rows.size)</code>) and
+                returns 5 results. This is reachable straight from the CLI
+                (<code>search ... -k 2147483647</code>), and §8 explicitly
+                promises that “<code>k</code> larger than the live count returns
+                all live rows” — which Kotlin satisfies only when it survives the
+                allocation.
+              </p>
+              <p class="fix">
+                <b>Fix</b>
+                <code>PriorityQueue(minOf(k, current.liveCount).coerceAtLeast(1), WORST_FIRST)</code>
+              </p>
+            </div>
+          </div>
+        </article>
+
+        <!-- 3 -->
+        <article class="finding">
+          <div class="finding__head">
+            <div class="finding__n">3</div>
+            <h3>The append path is crash-<em>detecting</em>, not crash-<em>safe</em></h3>
+            <div class="finding__body col flow">
+              <p>
+                <code>compact()</code> is genuinely crash-safe: it builds a
+                complete index in a staging directory, <code>fsync</code>s every
+                file and the directory, then renames. The append path is not held
+                to the same standard. In both languages
+                <code>vectors.f32</code> and <code>docs.jsonl</code> are appended
+                with a plain write and <strong>no <code>fsync</code></strong>,
+                while <code>offsets.bin</code>, <code>tombstones.bits</code> and
+                <code>manifest.json</code> each go through
+                <code>write_atomic</code> (write → fsync → rename → fsync parent).
+              </p>
+              <p>
+                So after <code>add_all</code> returns, the manifest is durable and
+                the bulk data may not be. On power loss the next
+                <code>open()</code> hits §2.2 check 4 and refuses the index as
+                truncated. The docstring justifies the ordering only for the
+                <em>opposite</em> failure:
+              </p>
+<pre>a crash before it leaves a vectors.f32 longer than row_count implies,
+which SPEC.md §2.2's length check catches on the next open</pre>
+              <p>
+                That reasoning holds when data is durable and the manifest isn't.
+                It does not cover manifest-durable / data-not, which is the
+                ordering the code actually produces. The result is not silent
+                corruption — the check fires — but the outcome is an
+                <em>unopenable</em> index rather than one that has merely lost its
+                last batch.
+              </p>
+              <p class="fix">
+                <b>Fix</b>
+                <code>fsync</code> both appended files before writing the
+                manifest. Given <code>compact()</code> already pays exactly this
+                cost, the asymmetry looks unintended.
+              </p>
+            </div>
+          </div>
+        </article>
+
+        <!-- 4 -->
+        <article class="finding">
+          <div class="finding__head">
+            <div class="finding__n">4</div>
+            <h3>Cross-implementation coverage has a tombstone-shaped hole</h3>
+            <div class="finding__body col flow">
+              <p>
+                <code>tombstones.bits</code> never crosses the language boundary
+                anywhere in conformance:
+              </p>
+              <ul class="plain">
+                <li><code>compare_files</code> iterates <code>vectors.f32 docs.jsonl offsets.bin</code> only.</li>
+                <li><code>run.sh</code> never deletes or compacts — no mention of either.</li>
+                <li>Neither CLI exposes a <code>delete</code> subcommand, so the harness <em>cannot</em> produce a tombstone file.</li>
+                <li><code>conformance/fixtures/golden-v1/</code> contains four files; no <code>tombstones.bits</code>.</li>
+              </ul>
+              <p>
+                This is the one file §6 singles out as silently misparseable:
+                “MSB-first produces a file of the same size that parses without
+                error and disagrees about which rows are deleted.”
+              </p>
+              <p>
+                <strong>In fairness, this is narrower than it first looks.</strong>
+                Both unit suites pin the same literal bytes for the same case
+                (rows 0 and 9 → <code>0x01</code>, <code>0x02</code>), so an
+                encoder drift would be caught in-language. I also checked the
+                round-trip empirically — a 20-row index with deletions at
+                <code>{0,3,7,8,15,19}</code>:
+              </p>
+            </div>
+          </div>
+
+          <div class="diverge" style="margin-top:1.1rem">
+            <div class="diverge__side diverge__side--left">
+              <div class="diverge__impl">Kotlin</div>
+              <div class="diverge__body">tombstones.bits = 898108
+14 live of 20</div>
+            </div>
+            <div class="diverge__side diverge__side--left">
+              <div class="diverge__impl">Python</div>
+              <div class="diverge__body">tombstones.bits = 898108
+14 live of 20</div>
+            </div>
+          </div>
+
+          <div class="col flow" style="margin-top:1.2rem">
+            <p>
+              They agree. What is missing is the <em>end-to-end</em> guard:
+              nothing verifies that one implementation's
+              <code>tombstones.bits</code> is read correctly by the other, nor
+              that <code>live_count</code> and search results agree over a
+              tombstoned index across languages. The encoder is pinned; the
+              reader is pinned only against its own writer.
+            </p>
+            <p class="fix">
+              <b>Fix</b>
+              Add <code>delete</code> to both CLIs, then extend
+              <code>run.sh</code> to delete a few ids, compare
+              <code>tombstones.bits</code> byte-for-byte, and re-run the query
+              sweep. A golden fixture containing tombstones would also close the
+              v1 regression gap.
+            </p>
+          </div>
+        </article>
+
+        <!-- 5 -->
+        <article class="finding">
+          <div class="finding__head">
+            <div class="finding__n">5</div>
+            <h3>The replay fixture uses two different decimal→float32 paths</h3>
+            <div class="finding__body col flow">
+              <p>
+                Appendix B justifies the replay fixture as a <em>stronger</em>
+                byte-identity check than the hashing embedder, because “decimal
+                parsing, float32 narrowing and summation order all have to
+                agree.” The two implementations parse those decimals differently.
+              </p>
+            </div>
+          </div>
+
+          <div class="diverge" style="margin-top:1.1rem">
+            <div class="diverge__side diverge__side--left">
+              <div class="diverge__impl">Kotlin — one rounding</div>
+              <div class="diverge__body">vector: List&lt;Float&gt;
+Float.parseFloat
+decimal → binary32</div>
+            </div>
+            <div class="diverge__side diverge__side--right">
+              <div class="diverge__impl">Python — two roundings</div>
+              <div class="diverge__body">vector: list[float]
+np.asarray(..., np.float32)
+decimal → binary64 → binary32</div>
+            </div>
+          </div>
+
+          <div class="col flow" style="margin-top:1.2rem">
+            <p>
+              Double rounding is not always equal to single rounding, so the
+              agreement the spec claims to <em>prove</em> is not established by
+              construction.
+            </p>
+            <p>
+              I measured the actual risk rather than assuming it. All
+              <strong>26,880</strong> values in the committed fixture agree under
+              both paths. Divergence requires a decimal landing within ~2⁻⁵³ of a
+              float32 midpoint, roughly a 2⁻²⁸ chance per value; 40M random
+              6-significant-digit decimals in the fixture's magnitude range
+              produced zero divergences, and a hand-constructed counterexample
+              needed 27 significant digits:
+            </p>
+<pre>1.00000005960464477539062501
+  direct    -&gt; <b>1.0000001</b>
+  viaDouble -&gt; <b>1.0</b></pre>
+            <p>
+              For a 768×35 fixture that is roughly <strong>1 in 10⁴ per
+              regeneration</strong>. Low probability, currently passing, and never
+              going to be caught by CI if it does happen — the failure would look
+              like an unreproducible byte-identity break.
+            </p>
+            <p class="fix">
+              <b>Fix</b>
+              One word: <code>List&lt;Double&gt;</code> in
+              <code>FixtureRecordWire</code>, then narrow, matching Python. Cheap
+              enough that a latent 10⁻⁴ is not worth carrying in a project whose
+              entire premise is bit-exactness.
+            </p>
+          </div>
+        </article>
+
+        <!-- 6 -->
+        <article class="finding">
+          <div class="finding__head">
+            <div class="finding__n">6</div>
+            <h3>§5's ordering invariant is never validated</h3>
+            <div class="finding__body col flow">
+              <p>
+                SPEC §5 says offsets “entries strictly increase”. Both readers
+                check only the length, <code>(row_count + 1) * 8</code>. Nothing
+                checks monotonicity, and the two languages degrade differently on
+                a file that passes the length check.
+              </p>
+            </div>
+          </div>
+
+          <div class="diverge" style="margin-top:1.1rem">
+            <div class="diverge__side diverge__side--left">
+              <div class="diverge__impl">Python — loud, by luck</div>
+              <div class="diverge__body">handle.read(negative) reads to EOF
+→ JSON decode failure
+→ CorruptIndexError</div>
+            </div>
+            <div class="diverge__side diverge__side--right">
+              <div class="diverge__impl">Kotlin — escapes the CLI</div>
+              <div class="diverge__body">ByteArray((end - start).toInt())
+→ NegativeArraySizeException
+→ raw stack trace</div>
+            </div>
+          </div>
+
+          <div class="col flow" style="margin-top:1.2rem">
+            <p>
+              <code>NegativeArraySizeException</code> is neither
+              <code>SimpleSemanticException</code> nor
+              <code>IllegalArgumentException</code>, so it escapes the CLI's
+              handlers. Given the care in §2.2's other six checks, this one reads
+              like an oversight.
+            </p>
+            <p class="fix">
+              <b>Fix</b>
+              A single ascending pass in <code>readOffsets</code> /
+              <code>read_offsets</code> closes it.
+            </p>
+          </div>
+        </article>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- =============================================================== notes -->
+  <section>
+    <div class="rail">
+      <div class="rail__mark">Also</div>
+      <div>
+        <h2>Smaller notes</h2>
+        <div class="col notes">
+
+          <div>
+            <p class="note__h">Python's <code>_closed</code> flag is dead.</p>
+            <p>
+              It is set in <code>close()</code> and never read. Searching a closed
+              index diverges — Python leaks a NumPy internal
+              (<code>IndexError: index 0 is out of bounds for axis 0 with size
+              0</code>) where Kotlin says <code>SimpleSemanticException: index is
+              closed</code>. The Kotlin message is the right one; the flag is
+              already there, it just needs a guard.
+            </p>
+          </div>
+
+          <div>
+            <p class="note__h">Kotlin's CLI argument parser reads past the end.</p>
+            <p>
+              <code>Options.parse</code> does <code>args[++i]</code> with no
+              bounds check, so a trailing <code>--dimension</code> throws
+              <code>ArrayIndexOutOfBoundsException</code> — which
+              <code>main</code> catches as neither of its two handled types, so
+              the user gets a stack trace. (<code>--dimension abc</code> is fine:
+              <code>NumberFormatException</code> <em>is</em> an
+              <code>IllegalArgumentException</code>.) Python's argparse handles
+              both cleanly.
+            </p>
+          </div>
+
+          <div>
+            <p class="note__h"><code>@SemanticIndexed</code> packs its sort key.</p>
+            <p>
+              <code>annotation.order * 1000 + position</code> collides past 1000
+              fields, or with a negative <code>order</code>.
+              <code>compareBy({ it.order }, { it.position })</code> is exact and
+              no harder to read. Contrived in practice, but it's an unnecessary
+              numeric assumption in code whose job is pinning order.
+            </p>
+          </div>
+
+          <div>
+            <p class="note__h"><code>httpx</code> is a hard dependency for every Python install.</p>
+            <p>
+              <code>gemini.py</code> opens with “<em>In its own module so
+              importing <code>simple_semantic</code> does not pull in an HTTP
+              client.</em>” The lazy import achieves that at <em>import</em> time,
+              but <code>pyproject.toml</code> lists <code>httpx</code> in core
+              <code>dependencies</code>, so every install still gets it. Kotlin's
+              <code>GeminiEmbedder</code> uses the JDK's
+              <code>java.net.http.HttpClient</code> and adds no dependency at all.
+              An optional <code>gemini</code> extra would make the packaging match
+              the stated intent — and match Kotlin.
+            </p>
+          </div>
+
+          <div>
+            <p class="note__h">Document fetch opens the file per result.</p>
+            <p>
+              Both <code>documentAt</code> and <code>_document_at</code> open
+              <code>docs.jsonl</code> fresh for every hit, so a
+              <code>k=10</code> search is 10 <code>open()</code> syscalls.
+              Correct, and irrelevant next to the brute-force scan, but a single
+              held handle is the obvious form.
+            </p>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================= closing -->
+  <section>
+    <div class="rail">
+      <div class="rail__mark">Overall</div>
+      <div>
+        <h2>The shape of what's missing</h2>
+        <div class="col flow">
+          <p>
+            The engineering here is well above average, and the reasons are
+            structural rather than stylistic: a normative spec that argues for
+            its own decisions, two independent implementations that keep each
+            other honest, and a conformance suite that checks bytes rather than
+            behaviour.
+          </p>
+        </div>
+
+        <div class="col" style="margin-top:2rem;margin-bottom:2rem">
+          <p class="pullquote">
+            <span class="mono"># Step 3 is the one that would be easy to quietly weaken. Do not.</span><br>
+            — the whole project's posture in one line.
+          </p>
+        </div>
+
+        <div class="col flow">
+          <p>
+            The findings cluster in a telling way. Four of the six — the
+            version-check ordering, the missing tombstone conformance, the two
+            decimal→float32 paths, and the unvalidated offset ordering — are all
+            cases where <strong>one implementation is right and the other is
+            right by coincidence</strong>, and the conformance suite happens not
+            to look there. That is the characteristic failure mode of a
+            two-implementation design: the suite proves agreement on the paths it
+            exercises, and those paths are the ones both authors thought about.
+            The gaps are in error handling, in the optional file, and in a numeric
+            conversion that agrees 99.99% of the time.
+          </p>
+          <p>
+            None of this is urgent. The most valuable single change is
+            <strong>#1</strong> — it costs a few lines and determines whether the
+            v2 migration is smooth or generates a wave of spurious “corrupt
+            index” reports. <strong>#4</strong> is the one that would most
+            strengthen the project's central claim, since it closes the last file
+            that has never been compared across the boundary. <strong>#3</strong>
+            is worth deciding deliberately either way: the current behaviour may
+            well be an acceptable trade, but the docstring argues for a guarantee
+            the code doesn't provide, and that gap between stated and actual is
+            the kind of thing this project otherwise never tolerates.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="close">
+
+</div>
