@@ -206,7 +206,17 @@ def read_offsets(directory: Path, row_count: int) -> np.ndarray:
             f"{path} is {len(raw)} bytes but row_count {row_count} requires "
             f"exactly {expected} ((row_count + 1) * 8)"
         )
-    return np.frombuffer(raw, dtype=OFFSET_DTYPE).copy()
+    offsets = np.frombuffer(raw, dtype=OFFSET_DTYPE).copy()
+    # SPEC.md §5. Without this a corrupt table yields a negative read length,
+    # which reaches the caller as an unrelated JSON decode failure.
+    bad = np.flatnonzero(offsets[1:] <= offsets[:-1])
+    if bad.size:
+        first = int(bad[0]) + 1
+        raise CorruptIndexError(
+            f"{path}: offset {first} is {int(offsets[first])}, not greater than "
+            f"offset {first - 1} ({int(offsets[first - 1])}); entries must strictly increase"
+        )
+    return offsets
 
 
 def open_vectors(directory: Path, row_count: int, dimension: int) -> np.ndarray:

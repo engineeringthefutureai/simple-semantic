@@ -101,6 +101,30 @@ class StoriesSpec : StringSpec({
         }
     }
 
+    "fixture decimals narrow the way Python narrows them" {
+        // Python reads a JSON number as float64 and narrows to float32, so it
+        // rounds twice. Parsing straight to Float rounds once, and the two
+        // disagree on decimals that sit on a float32 half-way point — which is
+        // a byte-identity failure over a fixture of arbitrary decimals.
+        val halfway = "1.00000005960464477539062501"
+        val directory = tempdir().toPath()
+        val file = directory.resolve("fixture.json")
+        val key = ReplayEmbedder.contentKey("text")
+        Files.writeString(
+            file,
+            """
+            {"fixture_version":1,"embedder_id":"test@1","dimension":1,"normalized":false,
+             "documents":[{"key":"$key","vector":[$halfway]}],"queries":[]}
+            """.trimIndent(),
+        )
+
+        val served = ReplayEmbedder.fromFile(file).embedDocuments(listOf("text"))[0][0]
+        served shouldBe halfway.toDouble().toFloat()
+        served shouldBe 1.0f
+        // What single rounding would have produced, for contrast.
+        (halfway.toFloat() == served) shouldBe false
+    }
+
     "document and query recordings are separate" {
         // The same text has two different correct vectors, by task type.
         val embedder = ReplayEmbedder.fromFile(fixture)

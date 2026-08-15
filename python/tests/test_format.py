@@ -190,6 +190,35 @@ async def test_open_refuses_an_unknown_format_version(index: SemanticIndex) -> N
     assert "99" in str(caught.value)
 
 
+def test_the_version_is_checked_before_the_rest_of_the_manifest(tmp_path: Path) -> None:
+    """A v2 manifest is under no obligation to carry v1's fields.
+
+    Decoding the whole object first would report a missing field instead of the
+    version number that explains why the field is missing.
+    """
+    (tmp_path / fmt.MANIFEST).write_text(
+        json.dumps({"format_version": 2, "segments": [{"embedder": "hashing-0@64"}]})
+    )
+    with pytest.raises(Exception) as caught:
+        fmt.read_manifest(tmp_path)
+    assert "2" in str(caught.value)
+
+
+async def test_offsets_must_increase(index: SemanticIndex) -> None:
+    """SPEC.md §5. A non-increasing pair would be read as a negative length."""
+    await index.add_all([Document(id=f"d{i}", text=f"document number {i}") for i in range(4)])
+    path = index.path
+    index.close()
+
+    offsets = bytearray((path / fmt.OFFSETS).read_bytes())
+    offsets[8:16] = (0).to_bytes(8, "little")
+    (path / fmt.OFFSETS).write_bytes(bytes(offsets))
+
+    with pytest.raises(CorruptIndexError) as caught:
+        SemanticIndex.open(path, HashingEmbedder(dimension=64, seed=0))
+    assert "not greater than" in str(caught.value)
+
+
 def test_normalization_handles_the_zero_vector() -> None:
     """SPEC.md §3.1: 0/0 would put a NaN in the matrix that poisons every dot product."""
     out = normalize_row(np.zeros(8, dtype=np.float32))

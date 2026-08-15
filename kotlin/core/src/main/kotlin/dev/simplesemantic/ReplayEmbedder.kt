@@ -73,7 +73,9 @@ public class ReplayEmbedder(
                                 "${record.vector.size} dimensions, expected ${wire.dimension}",
                         )
                     }
-                    record.key to record.vector.toFloatArray()
+                    record.key to FloatArray(record.vector.size) {
+                        record.vector[it].toFloat()
+                    }
                 }
 
             return ReplayEmbedder(

@@ -8,7 +8,8 @@
 #   4. Each implementation runs the query set against *both* indexes.
 #   5. Ranked id lists must match exactly; scores within 1e-6.
 #   6. Both must still read the committed v1 golden index.
-#   7. The same, over the story corpus with real recorded Gemini vectors.
+#   7. Deleting the same ids on both sides must produce the same tombstones.bits.
+#   8. The same, over the story corpus with real recorded Gemini vectors.
 #
 # Step 3 is the one that would be easy to quietly weaken. Do not.
 
@@ -67,7 +68,10 @@ status=0
 
 compare_files() {
   local left="$1" right="$2" label="$3"
-  for file in vectors.f32 docs.jsonl offsets.bin; do
+  shift 3
+  local files=("$@")
+  [[ ${#files[@]} -gt 0 ]] || files=(vectors.f32 docs.jsonl offsets.bin)
+  for file in "${files[@]}"; do
     if cmp -s "$left/$file" "$right/$file"; then
       local size
       size=$(wc -c <"$left/$file" | tr -d ' ')
@@ -134,6 +138,49 @@ else
   echo "FAIL  no golden fixture at $GOLDEN"
   status=1
 fi
+
+# ------------------------------------------------------------------ deletions
+
+# tombstones.bits is the one file the checks above never see, because it does
+# not exist until something is deleted. Row 0 and the last row are in the set so
+# both ends of the LSB-first bitmap (SPEC.md §6) are exercised, and dup/b leaves
+# its identical twin dup/a live, so the tie-break has to survive a deletion.
+DELETED=(ann/hnsw dup/b i18n/emoji misc/rrf)
+
+echo "==> deleting rows and comparing the tombstone bitmap"
+kt delete "$OUT/kotlin-index" "${DELETED[@]}" >/dev/null
+py delete "$OUT/python-index" "${DELETED[@]}" >/dev/null
+
+compare_files "$OUT/kotlin-index" "$OUT/python-index" "after delete: " tombstones.bits
+
+run_queries kt "$OUT/kotlin-index" "$OUT/kt-on-kt-deleted.jsonl"
+run_queries py "$OUT/kotlin-index" "$OUT/py-on-kt-deleted.jsonl"
+run_queries py "$OUT/python-index" "$OUT/py-on-py-deleted.jsonl"
+compare "$OUT/kt-on-kt-deleted.jsonl" "$OUT/py-on-kt-deleted.jsonl" \
+  "python skips the rows kotlin tombstoned"
+compare "$OUT/kt-on-kt-deleted.jsonl" "$OUT/py-on-py-deleted.jsonl" \
+  "both implementations rank identically after deletion"
+
+# Compaction rewrites every file, so the whole directory must match again.
+kt compact "$OUT/kotlin-index" >/dev/null
+py compact "$OUT/python-index" >/dev/null
+compare_files "$OUT/kotlin-index" "$OUT/python-index" "after compact: "
+
+for side in kotlin python; do
+  if [[ -e "$OUT/$side-index/tombstones.bits" ]]; then
+    echo "FAIL  $side left tombstones.bits behind after compaction"
+    status=1
+  fi
+done
+
+run_queries kt "$OUT/kotlin-index" "$OUT/kt-on-kt-compacted.jsonl"
+run_queries py "$OUT/python-index" "$OUT/py-on-py-compacted.jsonl"
+compare "$OUT/kt-on-kt-compacted.jsonl" "$OUT/py-on-py-compacted.jsonl" \
+  "both implementations rank identically after compaction"
+# Compaction only renumbers rows, so the ranking it produces must be the one the
+# tombstoned index already produced.
+compare "$OUT/kt-on-kt-deleted.jsonl" "$OUT/kt-on-kt-compacted.jsonl" \
+  "compaction preserves the ranking"
 
 # ------------------------------------------------- real-embedding conformance
 

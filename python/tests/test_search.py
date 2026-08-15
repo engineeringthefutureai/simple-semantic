@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from simple_semantic import Document, FixedChunker, SemanticIndex, tokenize
+from simple_semantic import (
+    Document,
+    FixedChunker,
+    SemanticIndex,
+    SimpleSemanticError,
+    tokenize,
+)
 
 
 async def test_exact_match_ranks_first(index: SemanticIndex) -> None:
@@ -164,3 +171,20 @@ async def test_k_boundary_selection_is_stable_across_calls(index: SemanticIndex)
     first = [r.id for r in await index.search("same text everywhere", k=5)]
     for _ in range(5):
         assert [r.id for r in await index.search("same text everywhere", k=5)] == first
+
+
+async def test_a_k_larger_than_the_index_returns_every_live_row(index: SemanticIndex) -> None:
+    """k is a request, not an allocation budget."""
+    await index.add_all([Document(id=f"d{i}", text=f"document number {i}") for i in range(6)])
+    index.delete("d3")
+    assert len(await index.search("document", k=2**31 - 1)) == 5
+
+
+async def test_search_on_a_closed_index_says_so(index: SemanticIndex) -> None:
+    """The vectors are a closed memory map; without the guard this is a segfault."""
+    await index.add_all([Document(id="d0", text="document zero")])
+    query = await index.embedder.embed_query("document")
+    index.close()
+    with pytest.raises(SimpleSemanticError) as caught:
+        index.search_vector(query)
+    assert "closed" in str(caught.value)

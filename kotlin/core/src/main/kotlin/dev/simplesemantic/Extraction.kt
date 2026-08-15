@@ -58,6 +58,8 @@ public fun <T : Any> documentsFrom(
     return list.map { item -> plan.extract(item, separator) }
 }
 
+private data class IndexedField(val order: Int, val position: Int, val field: Field)
+
 /** The resolved annotation layout for one class. Computed once per call. */
 internal class ExtractionPlan private constructor(
     private val idField: Field,
@@ -68,7 +70,7 @@ internal class ExtractionPlan private constructor(
     companion object {
         fun of(type: Class<*>): ExtractionPlan {
             var idField: Field? = null
-            val indexed = ArrayList<Pair<Int, Field>>()
+            val indexed = ArrayList<IndexedField>()
             val meta = ArrayList<Field>()
 
             for ((position, field) in type.declaredFields.withIndex()) {
@@ -85,7 +87,7 @@ internal class ExtractionPlan private constructor(
                 }
                 field.getAnnotation(SemanticIndexed::class.java)?.let { annotation ->
                     // Declaration order is only the tiebreak; order = n pins it.
-                    indexed.add((annotation.order * 1000 + position) to field)
+                    indexed.add(IndexedField(annotation.order, position, field))
                 }
                 if (field.isAnnotationPresent(SemanticMeta::class.java)) meta.add(field)
             }
@@ -102,7 +104,7 @@ internal class ExtractionPlan private constructor(
             }
             return ExtractionPlan(
                 resolvedId,
-                indexed.sortedBy { it.first }.map { it.second },
+                indexed.sortedWith(compareBy({ it.order }, { it.position })).map { it.field },
                 meta,
                 type,
             )

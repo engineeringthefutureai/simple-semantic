@@ -1,7 +1,10 @@
 """``GeminiEmbedder`` — the one component that makes a network call.
 
-In its own module so importing :mod:`simple_semantic` does not pull in an HTTP
-client.
+In its own module, and ``httpx`` is the ``gemini`` extra rather than a core
+dependency, so importing :mod:`simple_semantic` neither loads an HTTP client nor
+requires one to be installed::
+
+    pip install simple-semantic[gemini]
 """
 
 from __future__ import annotations

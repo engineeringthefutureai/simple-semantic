@@ -1,4 +1,4 @@
-"""``simple-semantic`` command line: index, search, stats, compact."""
+"""``simple-semantic`` command line: index, search, delete, stats, compact."""
 
 from __future__ import annotations
 
@@ -116,6 +116,14 @@ async def _cmd_search(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _cmd_delete(args: argparse.Namespace) -> int:
+    embedder = _build_embedder(args)
+    with SemanticIndex.open(Path(args.path), embedder) as index:
+        deleted = sum(index.delete(doc_id) for doc_id in args.ids)
+        print(f"deleted {deleted} of {len(args.ids)} -> {index.live_count()} live rows")
+    return 0
+
+
 async def _cmd_stats(args: argparse.Namespace) -> int:
     embedder = _build_embedder(args)
     with SemanticIndex.open(Path(args.path), embedder) as index:
@@ -158,6 +166,11 @@ def _parser() -> argparse.ArgumentParser:
     search_cmd.add_argument("-k", type=int, default=10)
     search_cmd.add_argument("--json", action="store_true")
     search_cmd.set_defaults(run=_cmd_search)
+
+    delete_cmd = sub.add_parser("delete", help="tombstone rows by document id")
+    delete_cmd.add_argument("path")
+    delete_cmd.add_argument("ids", nargs="+")
+    delete_cmd.set_defaults(run=_cmd_delete)
 
     stats_cmd = sub.add_parser("stats", help="print index statistics")
     stats_cmd.add_argument("path")

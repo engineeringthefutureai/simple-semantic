@@ -16,6 +16,7 @@ ok    docs.jsonl identical (5786 bytes)
 ok    offsets.bin identical (168 bytes)
 ok    python reads the kotlin index (12 queries, 110 results)
 ok    kotlin reads the python index (12 queries, 110 results)
+ok    after delete: tombstones.bits identical (3 bytes)
 ok    stories vectors.f32 identical (30720 bytes)
 ok    both implementations rank identically on real embeddings
 ```
@@ -153,6 +154,9 @@ $ simple-semantic search ./notes.index "approximate nearest neighbour" -k 3
   3. +0.288675  emb/norm
      Normalising every row at write time makes cosine similarity a plain dot product...
 
+$ simple-semantic delete ./notes.index ann/hnsw brute/exact
+deleted 2 of 2 -> 18 live rows
+
 $ simple-semantic stats ./notes.index
 $ simple-semantic compact ./notes.index
 ```
@@ -213,16 +217,17 @@ Requires **JDK 22 or newer** (the Foreign Function & Memory API is final there)
 and **Python 3.11+**.
 
 ```console
-$ cd kotlin && ./gradlew build               # 73 tests
+$ cd kotlin && ./gradlew build               # 81 tests
 $ cd python && uv venv .venv && uv pip install -e ".[dev]"
-$ cd python && .venv/bin/python -m pytest    # 78 tests
+$ cd python && .venv/bin/python -m pytest    # 83 tests
 $ ./conformance/run.sh
 ```
 
 `conformance/run.sh` builds an index with each implementation, compares the
 files byte for byte, runs the query set four ways, checks both still read the
-committed v1 golden index, and repeats the byte-identity check over the story
-corpus with real recorded embeddings.
+committed v1 golden index, deletes the same ids on both sides and compares the
+tombstone bitmap and the compacted result, then repeats the byte-identity check
+over the story corpus with real recorded embeddings.
 
 To drive the story corpus by hand, see
 [conformance/stories/README.md](conformance/stories/README.md).

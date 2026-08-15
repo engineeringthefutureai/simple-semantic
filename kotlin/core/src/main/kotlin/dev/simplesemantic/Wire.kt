@@ -18,6 +18,17 @@ import kotlinx.serialization.json.JsonPrimitive
  */
 internal val WireJson: Json = Json { ignoreUnknownKeys = true }
 
+/**
+ * Just enough of the manifest to check the version.
+ *
+ * SPEC.md §2.2 makes `format_version` check 1, before anything structural: a
+ * later version is free to change the field set, and decoding the whole
+ * manifest first would report that as corruption rather than as a version the
+ * reader is too old to understand.
+ */
+@Serializable
+internal data class ManifestVersionWire(@SerialName("format_version") val formatVersion: Int)
+
 /** `manifest.json`. SPEC.md §2. */
 @Serializable
 internal data class ManifestWire(
@@ -55,7 +66,10 @@ internal data class FixtureWire(
 @Serializable
 internal data class FixtureRecordWire(
     val key: String,
-    val vector: List<Float>,
+    // Double, not Float: Python reads these decimals into float64 and narrows,
+    // so Kotlin must round twice as well. Parsing straight to Float rounds once,
+    // and single rounding is not always equal to double rounding.
+    val vector: List<Double>,
     val id: String = "",
     val file: String = "",
     val prompt: String = "",

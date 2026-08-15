@@ -173,6 +173,16 @@ class SearchSpec : StringSpec({
         }
     }
 
+    "a k larger than the index returns every live row" {
+        // k is a request, not an allocation budget: sizing the heap to k would
+        // make this an OutOfMemoryError instead of six results.
+        freshIndex().use { index ->
+            index.addAll((0 until 6).map { Document("d$it", "document number $it") })
+            index.delete("d3")
+            index.search("document", k = Int.MAX_VALUE).size shouldBe 5
+        }
+    }
+
     "k boundary selection is stable across calls" {
         freshIndex().use { index ->
             index.addAll((0 until 12).map { Document("tie$it", "same text everywhere") })

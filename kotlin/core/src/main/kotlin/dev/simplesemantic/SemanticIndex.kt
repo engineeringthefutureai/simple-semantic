@@ -141,13 +141,25 @@ public class SemanticIndex private constructor(
                         "$expected ((row_count + 1) * 8)",
                 )
             }
-            return LongArray(rowCount + 1) { i ->
+            val offsets = LongArray(rowCount + 1) { i ->
                 var value = 0L
                 for (b in 7 downTo 0) {
                     value = (value shl 8) or (raw[i * 8 + b].toLong() and 0xFF)
                 }
                 value
             }
+            // SPEC.md §5. Without this a corrupt table yields a negative read
+            // length, which surfaces as a NegativeArraySizeException the CLI
+            // does not handle.
+            for (i in 1 until offsets.size) {
+                if (offsets[i] <= offsets[i - 1]) {
+                    throw CorruptIndexException(
+                        "$file: offset $i is ${offsets[i]}, not greater than " +
+                            "offset ${i - 1} (${offsets[i - 1]}); entries must strictly increase",
+                    )
+                }
+            }
+            return offsets
         }
 
         private fun readTombstones(path: Path, rowCount: Int): Tombstones {
@@ -408,16 +420,8 @@ public class SemanticIndex private constructor(
      */
     private fun append(vectorBytes: ByteArray, docBytes: ByteArray, newOffsets: List<Long>) {
         closeMapping()
-        Files.newOutputStream(
-            path.resolve(FileNames.VECTORS),
-            StandardOpenOption.WRITE,
-            StandardOpenOption.APPEND,
-        ).use { it.write(vectorBytes) }
-        Files.newOutputStream(
-            path.resolve(FileNames.DOCS),
-            StandardOpenOption.WRITE,
-            StandardOpenOption.APPEND,
-        ).use { it.write(docBytes) }
+        appendAndSync(path.resolve(FileNames.VECTORS), vectorBytes)
+        appendAndSync(path.resolve(FileNames.DOCS), docBytes)
 
         val combined = LongArray(offsets.size + newOffsets.size)
         offsets.copyInto(combined)
@@ -442,6 +446,25 @@ public class SemanticIndex private constructor(
             rowCount,
             current.dimension,
         )
+    }
+
+    /**
+     * Append and make durable before the manifest that describes the new length.
+     *
+     * The manifest goes through writeAtomic, so without this the manifest could
+     * be durable while the rows it counts are not — and the length check in
+     * SPEC.md §2.2 would then refuse the whole index rather than the index
+     * merely having lost its last batch.
+     */
+    private fun appendAndSync(file: Path, bytes: ByteArray) {
+        java.nio.channels.FileChannel.open(
+            file,
+            StandardOpenOption.WRITE,
+            StandardOpenOption.APPEND,
+        ).use { channel ->
+            channel.write(java.nio.ByteBuffer.wrap(bytes))
+            channel.force(true)
+        }
     }
 
     private fun writeTombstones() {
@@ -576,7 +599,10 @@ public class SemanticIndex private constructor(
 
         // A bounded min-heap: O(n log k), never a full sort. The head is the
         // worst candidate held, so admitting a new row is one comparison.
-        val heap = PriorityQueue<Hit>(k, WORST_FIRST)
+        // k is a caller's request, not an allocation budget: PriorityQueue sizes
+        // its backing array eagerly, so `-k 2147483647` would be an OOM rather
+        // than the "all live rows" §8 promises.
+        val heap = PriorityQueue<Hit>(minOf(k, current.liveCount).coerceAtLeast(1), WORST_FIRST)
         for (row in 0 until current.rowCount) {
             if (!live[row]) continue
             val score = store.dot(row, query)

@@ -79,13 +79,21 @@ public data class Manifest(
 
     public companion object {
         public fun decode(raw: String, path: String): Manifest {
+            // Version first: a v2 manifest may not carry v1's fields at all, and
+            // "too old to read this" is the useful error, not "corrupt".
+            val version = try {
+                WireJson.decodeFromString(ManifestVersionWire.serializer(), raw).formatVersion
+            } catch (exc: kotlinx.serialization.SerializationException) {
+                throw CorruptIndexException("$path: manifest is not valid JSON (${exc.message})")
+            }
+            if (version != FORMAT_VERSION) {
+                throw FormatVersionException(path, version, FORMAT_VERSION)
+            }
+
             val wire = try {
                 WireJson.decodeFromString(ManifestWire.serializer(), raw)
             } catch (exc: kotlinx.serialization.SerializationException) {
                 throw CorruptIndexException("$path: manifest is not valid JSON (${exc.message})")
-            }
-            if (wire.formatVersion != FORMAT_VERSION) {
-                throw FormatVersionException(path, wire.formatVersion, FORMAT_VERSION)
             }
             return Manifest(
                 embedderId = wire.embedderId,

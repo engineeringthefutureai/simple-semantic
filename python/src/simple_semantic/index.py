@@ -55,6 +55,14 @@ class AddResult:
     skipped: int
 
 
+def _append_and_sync(path: Path, data: bytes | bytearray) -> None:
+    """Append and make durable before the manifest that describes the new length."""
+    with open(path, "ab") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
 class SemanticIndex:
     """A directory of four files, plus the in-memory maps needed to serve it.
 
@@ -174,6 +182,10 @@ class SemanticIndex:
     def close(self) -> None:
         self.close_mapping()
         self._closed = True
+
+    def _require_open(self) -> None:
+        if self._closed:
+            raise SimpleSemanticError(f"{self._path}: index is closed")
 
     def __enter__(self) -> SemanticIndex:
         return self
@@ -358,12 +370,14 @@ class SemanticIndex:
         The manifest is written last because it declares how long the others
         should be: a crash before it leaves a vectors.f32 longer than row_count
         implies, which SPEC.md §2.2's length check catches on the next open.
+
+        The appends are fsynced first, so the reverse — a durable manifest
+        counting rows that never reached the disk — cannot happen either. That
+        one would refuse the whole index rather than lose the last batch.
         """
         self.close_mapping()
-        with open(self._path / fmt.VECTORS, "ab") as handle:
-            handle.write(vector_bytes)
-        with open(self._path / fmt.DOCS, "ab") as handle:
-            handle.write(doc_bytes)
+        _append_and_sync(self._path / fmt.VECTORS, vector_bytes)
+        _append_and_sync(self._path / fmt.DOCS, doc_bytes)
 
         self._offsets = np.concatenate(
             [self._offsets, np.array(new_offsets, dtype=fmt.OFFSET_DTYPE)]
@@ -490,6 +504,7 @@ class SemanticIndex:
         Public so a caller with a cached embedding or a centroid need not go
         back through the embedder.
         """
+        self._require_open()
         if k <= 0:
             return []
         if self._manifest.row_count == 0:

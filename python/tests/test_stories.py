@@ -23,6 +23,7 @@ from simple_semantic import (
     SemanticIndex,
 )
 from simple_semantic import format as fmt
+from simple_semantic.replay import content_key
 from stories import FIXTURE, Query, Story, load_queries, load_stories
 
 pytestmark = pytest.mark.skipif(
@@ -98,6 +99,25 @@ async def test_a_missing_recording_is_loud(story_index) -> None:
     with pytest.raises(ReplayMissError) as caught:
         await index.add_all([Document(id="x", text="text that was never embedded")])
     assert "never embedded" in str(caught.value)
+
+
+async def test_fixture_decimals_narrow_through_float64(tmp_path: Path) -> None:
+    """A JSON number is read as float64, then narrowed — two roundings, not one.
+
+    Kotlin has to do the same, or a decimal sitting on a float32 half-way point
+    lands a different bit pattern in vectors.f32 on each side.
+    """
+    halfway = "1.00000005960464477539062501"
+    key = content_key("text")
+    path = tmp_path / "fixture.json"
+    path.write_text(
+        '{"fixture_version":1,"embedder_id":"test@1","dimension":1,"normalized":false,'
+        f'"documents":[{{"key":"{key}","vector":[{halfway}]}}],"queries":[]}}'
+    )
+
+    served = (await ReplayEmbedder.from_file(path).embed_documents(["text"]))[0][0]
+    assert served == np.float32(float(halfway))
+    assert served == np.float32(1.0)
 
 
 async def test_document_and_query_recordings_are_separate(embedder: ReplayEmbedder, corpus) -> None:

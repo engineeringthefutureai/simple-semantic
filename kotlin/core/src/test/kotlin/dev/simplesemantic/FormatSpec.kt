@@ -234,6 +234,50 @@ class FormatSpec : StringSpec({
         error.message!! shouldContain "99"
     }
 
+    "the version is checked before the rest of the manifest" {
+        // A v2 manifest is under no obligation to carry v1's fields. If the
+        // reader decodes the whole object first, it reports a missing field
+        // instead of the version number that explains why the field is missing.
+        val directory = tempdir().toPath().resolve("index")
+        Files.createDirectories(directory)
+        Files.writeString(
+            directory.resolve(FileNames.MANIFEST),
+            """{"format_version":2,"segments":[{"embedder":"hashing-0@64"}]}""",
+        )
+        val error = shouldThrow<FormatVersionException> {
+            SemanticIndex.open(directory, HashingEmbedder(dimension = 64))
+        }
+        error.message!! shouldContain "2"
+    }
+
+    "a manifest that is not JSON at all names the file" {
+        val directory = tempdir().toPath().resolve("index")
+        Files.createDirectories(directory)
+        Files.writeString(directory.resolve(FileNames.MANIFEST), "not json")
+        val error = shouldThrow<CorruptIndexException> {
+            SemanticIndex.open(directory, HashingEmbedder(dimension = 64))
+        }
+        error.message!! shouldContain "not valid JSON"
+    }
+
+    "offsets must increase" {
+        val directory = tempdir().toPath().resolve("index")
+        SemanticIndex.create(directory, HashingEmbedder(dimension = 64)).use { index ->
+            index.addAll((0 until 4).map { Document("d$it", "document number $it") })
+        }
+        // Line lengths come from offsets alone; a non-increasing pair would be
+        // read as a negative-length document rather than reported.
+        val offsetsFile = directory.resolve(FileNames.OFFSETS)
+        val bytes = Files.readAllBytes(offsetsFile)
+        java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).putLong(8, 0L)
+        Files.write(offsetsFile, bytes)
+
+        val error = shouldThrow<CorruptIndexException> {
+            SemanticIndex.open(directory, HashingEmbedder(dimension = 64))
+        }
+        error.message!! shouldContain "not greater than"
+    }
+
     "normalization handles the zero vector" {
         // 0/0 would put a NaN in the matrix that poisons every dot product.
         val out = normalizeRow(FloatArray(8))
